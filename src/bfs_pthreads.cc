@@ -86,7 +86,7 @@ int64_t TDStep(const Graph &g, pvector<NodeID> &parent,
       // Use static block distribution to match OpenMP default behavior
       size_t queue_size = queue.size();
       size_t start = (thread_id * queue_size) / num_threads;
-      size_t end = ((thread_id + 1) * queue_size) / num_threads;
+      size_t end = (thread_id == num_threads - 1) ? queue_size : ((thread_id + 1) * queue_size) / num_threads;
       
       for (size_t i = start; i < end; i++) {
         auto q_iter = queue.begin() + i;
@@ -130,7 +130,7 @@ void BitmapToQueue(const Graph &g, const Bitmap &bm,
       
       // Distribute work among threads
       NodeID start = (thread_id * g.num_nodes()) / num_threads;
-      NodeID end = ((thread_id + 1) * g.num_nodes()) / num_threads;
+      NodeID end = (thread_id == num_threads - 1) ? g.num_nodes() : ((thread_id + 1) * g.num_nodes()) / num_threads;
       
       for (NodeID n = start; n < end; n++) {
         if (bm.get_bit(n)) {
