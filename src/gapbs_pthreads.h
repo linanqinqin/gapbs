@@ -133,6 +133,7 @@ private:
     
     int get_num_threads() const { return num_threads_; }
     
+public:
     // Barrier synchronization
     void barrier() {
         if (!barrier_) {
@@ -148,7 +149,6 @@ private:
         func();
         pthread_mutex_unlock(&critical_mutex);
     }
-    
     // Parallel for with reduction
     template<typename Func>
     int64_t parallel_for_reduction(size_t count, Func func, int64_t initial_value = 0) {
@@ -256,6 +256,7 @@ private:
         return result.load();
     }
     
+public:
     ~GAPBSPthreads() {
         for (int i = 0; i < num_threads_; i++) {
             pthread_mutex_destroy(&mutexes_[i]);
