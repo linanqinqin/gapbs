@@ -226,6 +226,87 @@ public:
         }
     }
     
+    // Parallel for with range-based work distribution (hides work distribution logic)
+    template<typename Func>
+    void parallel_for_range(size_t count, Func func) {
+        struct ThreadData {
+            Func* func;
+            size_t count;
+            int thread_id;
+            int num_threads;
+        };
+        
+        auto worker = [](void* arg) -> void* {
+            ThreadData* data = static_cast<ThreadData*>(arg);
+            
+            // Static block distribution - each thread gets a contiguous range
+            size_t start = (data->thread_id * data->count) / data->num_threads;
+            size_t end = ((data->thread_id + 1) * data->count) / data->num_threads;
+            
+            for (size_t i = start; i < end; i++) {
+                (*data->func)(i);
+            }
+            return nullptr;
+        };
+        
+        std::vector<ThreadData> thread_data(num_threads_);
+        for (int i = 0; i < num_threads_; i++) {
+            thread_data[i] = {&func, count, i, num_threads_};
+            pthread_create(&threads_[i], nullptr, worker, &thread_data[i]);
+        }
+        
+        for (int i = 0; i < num_threads_; i++) {
+            pthread_join(threads_[i], nullptr);
+        }
+    }
+    
+    // Parallel for with range-based work distribution and reduction
+    template<typename Func>
+    int64_t parallel_for_range_reduction(size_t count, Func func, int64_t initial_value = 0) {
+        std::vector<int64_t> local_results(num_threads_, 0);
+        
+        struct ThreadData {
+            Func* func;
+            size_t count;
+            int thread_id;
+            int num_threads;
+            std::vector<int64_t>* local_results;
+        };
+        
+        auto worker = [](void* arg) -> void* {
+            ThreadData* data = static_cast<ThreadData*>(arg);
+            int64_t local_result = 0;
+            
+            // Static block distribution - each thread gets a contiguous range
+            size_t start = (data->thread_id * data->count) / data->num_threads;
+            size_t end = ((data->thread_id + 1) * data->count) / data->num_threads;
+            
+            for (size_t i = start; i < end; i++) {
+                local_result += (*data->func)(i);
+            }
+            
+            (*data->local_results)[data->thread_id] = local_result;
+            return nullptr;
+        };
+        
+        std::vector<ThreadData> thread_data(num_threads_);
+        for (int i = 0; i < num_threads_; i++) {
+            thread_data[i] = {&func, count, i, num_threads_, &local_results};
+            pthread_create(&threads_[i], nullptr, worker, &thread_data[i]);
+        }
+        
+        for (int i = 0; i < num_threads_; i++) {
+            pthread_join(threads_[i], nullptr);
+        }
+        
+        int64_t total = initial_value;
+        for (int64_t local : local_results) {
+            total += local;
+        }
+        
+        return total;
+    }
+    
     // Parallel region with thread-local storage
     template<typename Func>
     int64_t parallel_region(Func func) {
@@ -282,6 +363,13 @@ void gapbs_set_num_threads(int num_threads);
 
 #define GAPBS_PARALLEL_REGION(func, result) \
     result = gapbs_pthreads.parallel_region(func)
+
+// New cleaner macros that hide work distribution logic
+#define GAPBS_PARALLEL_FOR_RANGE(count, func) \
+    gapbs_pthreads.parallel_for_range(count, func)
+
+#define GAPBS_PARALLEL_FOR_RANGE_REDUCTION(count, func, result) \
+    result = gapbs_pthreads.parallel_for_range_reduction(count, func, 0)
 
 #define GAPBS_BARRIER() \
     gapbs_pthreads.barrier()

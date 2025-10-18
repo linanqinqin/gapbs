@@ -52,26 +52,18 @@ int64_t BUStep(const Graph &g, pvector<NodeID> &parent, Bitmap &front,
   next.reset();
   
   // Replace: #pragma omp parallel for reduction(+ : awake_count) schedule(dynamic, 1024)
-  // Use GAPBS_PARALLEL_REGION to ensure proper reduction and avoid race conditions
-  GAPBS_PARALLEL_REGION(
-    [&](int thread_id, int num_threads) -> int64_t {
+  // Use new cleaner interface that hides work distribution logic
+  GAPBS_PARALLEL_FOR_RANGE_REDUCTION(g.num_nodes(), 
+    [&](NodeID u) -> int64_t {
       int64_t local_count = 0;
-      
-      // Distribute work among threads using static block distribution
-      // This matches OpenMP's behavior for correctness
-      NodeID start = (thread_id * g.num_nodes()) / num_threads;
-      NodeID end = ((thread_id + 1) * g.num_nodes()) / num_threads;
-      
-      for (NodeID u = start; u < end; u++) {
-        if (parent[u] < 0) {
-          for (NodeID v : g.in_neigh(u)) {
-            if (front.get_bit(v)) {
-              parent[u] = v;
-              local_count++;
-              // Use atomic bitmap operation to avoid race conditions
-              next.set_bit_atomic(u);
-              break;
-            }
+      if (parent[u] < 0) {
+        for (NodeID v : g.in_neigh(u)) {
+          if (front.get_bit(v)) {
+            parent[u] = v;
+            local_count++;
+            // Use atomic bitmap operation to avoid race conditions
+            next.set_bit_atomic(u);
+            break;
           }
         }
       }
@@ -87,30 +79,23 @@ int64_t TDStep(const Graph &g, pvector<NodeID> &parent,
   int64_t scout_count = 0;
   
   // Replace: #pragma omp parallel with thread-local QueueBuffer
-  GAPBS_PARALLEL_REGION(
-    [&](int thread_id, int num_threads) -> int64_t {
+  // Use new cleaner interface that hides work distribution logic
+  GAPBS_PARALLEL_FOR_RANGE_REDUCTION(queue.size(),
+    [&](size_t i) -> int64_t {
       int64_t local_count = 0;
       QueueBuffer<NodeID> lqueue(queue);
       
-      // Distribute queue iterations among threads (like OpenMP for does)
-      // Use static block distribution to match OpenMP default behavior
-      size_t queue_size = queue.size();
-      size_t start = (thread_id * queue_size) / num_threads;
-      size_t end = ((thread_id + 1) * queue_size) / num_threads;
-      
-      for (size_t i = start; i < end; i++) {
-        auto q_iter = queue.begin() + i;
-          NodeID u = *q_iter;
-          for (NodeID v : g.out_neigh(u)) {
-            NodeID curr_val = parent[v];
-            if (curr_val < 0) {
-              if (compare_and_swap(parent[v], curr_val, u)) {
-                lqueue.push_back(v);
-                local_count += -curr_val;
-              }
-            }
+      auto q_iter = queue.begin() + i;
+      NodeID u = *q_iter;
+      for (NodeID v : g.out_neigh(u)) {
+        NodeID curr_val = parent[v];
+        if (curr_val < 0) {
+          if (compare_and_swap(parent[v], curr_val, u)) {
+            lqueue.push_back(v);
+            local_count += -curr_val;
           }
         }
+      }
       lqueue.flush();
       return local_count;
     }, scout_count);
@@ -121,7 +106,7 @@ int64_t TDStep(const Graph &g, pvector<NodeID> &parent,
 
 void QueueToBitmap(const SlidingQueue<NodeID> &queue, Bitmap &bm) {
   // Replace: #pragma omp parallel for
-  GAPBS_PARALLEL_FOR(queue.size(),
+  GAPBS_PARALLEL_FOR_RANGE(queue.size(),
     [&](size_t i) {
       auto q_iter = queue.begin() + i;
       NodeID u = *q_iter;
@@ -132,24 +117,16 @@ void QueueToBitmap(const SlidingQueue<NodeID> &queue, Bitmap &bm) {
 void BitmapToQueue(const Graph &g, const Bitmap &bm,
                    SlidingQueue<NodeID> &queue) {
   // Replace: #pragma omp parallel with thread-local QueueBuffer
-  int64_t dummy_result; // Intentionally unused - required by macro
-  (void)dummy_result; // Suppress unused variable warning
-  GAPBS_PARALLEL_REGION(
-    [&](int thread_id, int num_threads) -> int64_t {
+  // Use new cleaner interface that hides work distribution logic
+  GAPBS_PARALLEL_FOR_RANGE(g.num_nodes(),
+    [&](NodeID n) {
       QueueBuffer<NodeID> lqueue(queue);
       
-      // Distribute work among threads
-      NodeID start = (thread_id * g.num_nodes()) / num_threads;
-      NodeID end = ((thread_id + 1) * g.num_nodes()) / num_threads;
-      
-      for (NodeID n = start; n < end; n++) {
-        if (bm.get_bit(n)) {
-          lqueue.push_back(n);
-        }
+      if (bm.get_bit(n)) {
+        lqueue.push_back(n);
       }
       lqueue.flush();
-      return 0; // No reduction needed
-    }, dummy_result);
+    });
   
   queue.slide_window();
 }
@@ -158,7 +135,7 @@ pvector<NodeID> InitParent(const Graph &g) {
   pvector<NodeID> parent(g.num_nodes());
   
   // Replace: #pragma omp parallel for
-  GAPBS_PARALLEL_FOR(g.num_nodes(),
+  GAPBS_PARALLEL_FOR_RANGE(g.num_nodes(),
     [&](NodeID n) {
       parent[n] = g.out_degree(n) != 0 ? -g.out_degree(n) : -1;
     });
@@ -220,7 +197,7 @@ pvector<NodeID> DOBFS(const Graph &g, NodeID source, bool logging_enabled = fals
   }
   
   // Replace: #pragma omp parallel for
-  GAPBS_PARALLEL_FOR(g.num_nodes(),
+  GAPBS_PARALLEL_FOR_RANGE(g.num_nodes(),
     [&](NodeID n) {
       if (parent[n] < -1)
         parent[n] = -1;
