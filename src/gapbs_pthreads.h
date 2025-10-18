@@ -27,6 +27,10 @@ bool pthreads_compare_and_swap(T &x, const T &old_val, const T &new_val) {
     return std::atomic_compare_exchange_strong(reinterpret_cast<std::atomic<T>*>(&x), &expected, new_val);
 }
 
+// Define macros to override atomic operations globally
+#define fetch_and_add pthreads_fetch_and_add
+#define compare_and_swap pthreads_compare_and_swap
+
 /*
 GAP Benchmark Suite
 File:   GAPBS Pthreads Wrapper

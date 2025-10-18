@@ -15,9 +15,7 @@
 #include "timer.h"
 #include "gapbs_pthreads.h"
 
-// Use pthreads-specific atomic operations with prefixes
-#define fetch_and_add pthreads_fetch_and_add
-#define compare_and_swap pthreads_compare_and_swap
+// Atomic operations are now defined in gapbs_pthreads.h
 
 
 /*
