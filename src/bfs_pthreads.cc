@@ -16,16 +16,22 @@
 #include "timer.h"
 #include "gapbs_pthreads.h"
 
-// Override atomic operations with pthreads-specific implementations
-template<typename T, typename U>
-T fetch_and_add(T &x, U inc) {
-    return gapbs_pthreads_atomics::fetch_and_add(x, inc);
+// Create a namespace to override atomic operations
+namespace bfs_pthreads_atomics {
+    template<typename T, typename U>
+    T fetch_and_add(T &x, U inc) {
+        return gapbs_pthreads_atomics::fetch_and_add(x, inc);
+    }
+    
+    template<typename T>
+    bool compare_and_swap(T &x, const T &old_val, const T &new_val) {
+        return gapbs_pthreads_atomics::compare_and_swap(x, old_val, new_val);
+    }
 }
 
-template<typename T>
-bool compare_and_swap(T &x, const T &old_val, const T &new_val) {
-    return gapbs_pthreads_atomics::compare_and_swap(x, old_val, new_val);
-}
+// Use the pthreads-specific atomic operations
+using bfs_pthreads_atomics::fetch_and_add;
+using bfs_pthreads_atomics::compare_and_swap;
 
 
 /*
