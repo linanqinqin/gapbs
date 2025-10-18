@@ -15,21 +15,7 @@
 #include <cstdlib>
 #include <cstring>
 
-// Pthreads-specific atomic operations with prefixes to avoid conflicts
-// Use compiler intrinsics directly for proper atomic operations
-template<typename T, typename U>
-T pthreads_fetch_and_add(T &x, U inc) {
-    return __sync_fetch_and_add(&x, static_cast<T>(inc));
-}
-
-template<typename T>
-bool pthreads_compare_and_swap(T &x, const T &old_val, const T &new_val) {
-    return __sync_bool_compare_and_swap(&x, old_val, new_val);
-}
-
-// Define macros to override atomic operations globally
-#define fetch_and_add pthreads_fetch_and_add
-#define compare_and_swap pthreads_compare_and_swap
+// Atomic operations are now handled by platform_atomics.h
 
 /*
 GAP Benchmark Suite

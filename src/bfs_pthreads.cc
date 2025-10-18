@@ -15,7 +15,7 @@
 #include "timer.h"
 #include "gapbs_pthreads.h"
 
-// Atomic operations are now defined in gapbs_pthreads.h
+// Atomic operations are now handled by platform_atomics.h
 
 
 /*

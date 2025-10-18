@@ -15,8 +15,6 @@ Wrappers for compiler intrinsics for atomic memory operations (AMOs)
 */
 
 
-#if defined _OPENMP
-
   #if defined __GNUC__
 
     // gcc/clang/icc instrinsics
@@ -103,27 +101,5 @@ Wrappers for compiler intrinsics for atomic memory operations (AMOs)
     #error No atomics available for this compiler but using OpenMP
 
   #endif  // else defined __GNUC__ __SUNPRO_CC
-
-#else   // defined _OPENMP
-
-  // serial fallbacks
-
-  template<typename T, typename U>
-  T fetch_and_add(T &x, U inc) {
-    T orig_val = x;
-    x += inc;
-    return orig_val;
-  }
-
-  template<typename T>
-  bool compare_and_swap(T &x, const T &old_val, const T &new_val) {
-    if (x == old_val) {
-      x = new_val;
-      return true;
-    }
-    return false;
-  }
-
-#endif  // else defined _OPENMP
 
 #endif  // PLATFORM_ATOMICS_H_
