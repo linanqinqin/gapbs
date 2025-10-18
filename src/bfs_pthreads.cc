@@ -122,14 +122,15 @@ void QueueToBitmap(const SlidingQueue<NodeID> &queue, Bitmap &bm) {
 void BitmapToQueue(const Graph &g, const Bitmap &bm,
                    SlidingQueue<NodeID> &queue) {
   // Replace: #pragma omp parallel with thread-local QueueBuffer
-  int64_t dummy_result;
+  int64_t dummy_result; // Intentionally unused - required by macro
+  (void)dummy_result; // Suppress unused variable warning
   GAPBS_PARALLEL_REGION(
     [&](int thread_id, int num_threads) -> int64_t {
       QueueBuffer<NodeID> lqueue(queue);
       
       // Distribute work among threads
-      size_t start = (thread_id * g.num_nodes()) / num_threads;
-      size_t end = ((thread_id + 1) * g.num_nodes()) / num_threads;
+      NodeID start = (thread_id * g.num_nodes()) / num_threads;
+      NodeID end = ((thread_id + 1) * g.num_nodes()) / num_threads;
       
       for (NodeID n = start; n < end; n++) {
         if (bm.get_bit(n)) {
