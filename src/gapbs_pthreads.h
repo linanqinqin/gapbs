@@ -131,6 +131,24 @@ private:
         return std::thread::hardware_concurrency();
     }
     
+    int get_num_threads() const { return num_threads_; }
+    
+    // Barrier synchronization
+    void barrier() {
+        if (!barrier_) {
+            barrier_ = make_unique<Barrier>(num_threads_);
+        }
+        barrier_->wait();
+    }
+    
+    // Critical section
+    void critical_section(std::function<void()> func) {
+        static pthread_mutex_t critical_mutex = PTHREAD_MUTEX_INITIALIZER;
+        pthread_mutex_lock(&critical_mutex);
+        func();
+        pthread_mutex_unlock(&critical_mutex);
+    }
+    
     // Parallel for with reduction
     template<typename Func>
     int64_t parallel_for_reduction(size_t count, Func func, int64_t initial_value = 0) {
@@ -175,25 +193,6 @@ private:
         
         return total;
     }
-    
-    
-    // Barrier synchronization
-    void barrier() {
-        if (!barrier_) {
-            barrier_ = make_unique<Barrier>(num_threads_);
-        }
-        barrier_->wait();
-    }
-    
-    // Critical section
-    void critical_section(std::function<void()> func) {
-        static pthread_mutex_t critical_mutex = PTHREAD_MUTEX_INITIALIZER;
-        pthread_mutex_lock(&critical_mutex);
-        func();
-        pthread_mutex_unlock(&critical_mutex);
-    }
-    
-    int get_num_threads() const { return num_threads_; }
     
     // Parallel for without reduction
     template<typename Func>
