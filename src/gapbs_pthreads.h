@@ -35,6 +35,166 @@ private:
     std::vector<pthread_mutex_t> mutexes_;
     std::vector<pthread_cond_t> conditions_;
     
+    // Thread pool implementation
+    struct ThreadPool {
+        std::vector<pthread_t> threads;
+        std::vector<pthread_mutex_t> work_mutexes;
+        std::vector<pthread_cond_t> work_conditions;
+        std::vector<bool> thread_busy;
+        std::vector<void*> work_data;
+        std::vector<std::function<void*(void*)>> work_functions;
+        pthread_mutex_t pool_mutex;
+        pthread_cond_t pool_condition;
+        bool shutdown;
+        int active_threads;
+        
+        // Barrier and critical section support for worker threads
+        pthread_mutex_t barrier_mutex;
+        pthread_cond_t barrier_condition;
+        int barrier_count;
+        int barrier_generation;
+        bool barrier_active;
+        
+        pthread_mutex_t critical_mutex;
+        
+        ThreadPool(int num_threads) : shutdown(false), active_threads(0), 
+                                      barrier_count(0), barrier_generation(0), barrier_active(false) {
+            threads.resize(num_threads);
+            work_mutexes.resize(num_threads);
+            work_conditions.resize(num_threads);
+            thread_busy.resize(num_threads, false);
+            work_data.resize(num_threads, nullptr);
+            work_functions.resize(num_threads);
+            
+            pthread_mutex_init(&pool_mutex, nullptr);
+            pthread_cond_init(&pool_condition, nullptr);
+            pthread_mutex_init(&barrier_mutex, nullptr);
+            pthread_cond_init(&barrier_condition, nullptr);
+            pthread_mutex_init(&critical_mutex, nullptr);
+            
+            for (int i = 0; i < num_threads; i++) {
+                pthread_mutex_init(&work_mutexes[i], nullptr);
+                pthread_cond_init(&work_conditions[i], nullptr);
+            }
+        }
+        
+        ~ThreadPool() {
+            shutdown = true;
+            pthread_cond_broadcast(&pool_condition);
+            
+            for (int i = 0; i < threads.size(); i++) {
+                pthread_join(threads[i], nullptr);
+                pthread_mutex_destroy(&work_mutexes[i]);
+                pthread_cond_destroy(&work_conditions[i]);
+            }
+            
+            pthread_mutex_destroy(&pool_mutex);
+            pthread_cond_destroy(&pool_condition);
+            pthread_mutex_destroy(&barrier_mutex);
+            pthread_cond_destroy(&barrier_condition);
+            pthread_mutex_destroy(&critical_mutex);
+        }
+        
+        void start_threads() {
+            for (int i = 0; i < threads.size(); i++) {
+                pthread_create(&threads[i], nullptr, worker_thread, this);
+            }
+        }
+        
+        static void* worker_thread(void* arg) {
+            ThreadPool* pool = static_cast<ThreadPool*>(arg);
+            int thread_id = -1;
+            
+            // Find our thread ID
+            pthread_mutex_lock(&pool->pool_mutex);
+            for (int i = 0; i < pool->threads.size(); i++) {
+                if (pthread_equal(pthread_self(), pool->threads[i])) {
+                    thread_id = i;
+                    break;
+                }
+            }
+            pthread_mutex_unlock(&pool->pool_mutex);
+            
+            while (true) {
+                pthread_mutex_lock(&pool->work_mutexes[thread_id]);
+                
+                while (!pool->thread_busy[thread_id] && !pool->shutdown) {
+                    pthread_cond_wait(&pool->work_conditions[thread_id], &pool->work_mutexes[thread_id]);
+                }
+                
+                if (pool->shutdown) {
+                    pthread_mutex_unlock(&pool->work_mutexes[thread_id]);
+                    break;
+                }
+                
+                // Execute work
+                if (pool->work_functions[thread_id]) {
+                    pool->work_functions[thread_id](pool->work_data[thread_id]);
+                }
+                
+                pool->thread_busy[thread_id] = false;
+                pool->work_functions[thread_id] = nullptr;
+                pool->work_data[thread_id] = nullptr;
+                
+                pthread_mutex_unlock(&pool->work_mutexes[thread_id]);
+                
+                // Notify pool that thread is done
+                pthread_mutex_lock(&pool->pool_mutex);
+                pool->active_threads--;
+                if (pool->active_threads == 0) {
+                    pthread_cond_signal(&pool->pool_condition);
+                }
+                pthread_mutex_unlock(&pool->pool_mutex);
+            }
+            
+            return nullptr;
+        }
+        
+        void execute_work(int thread_id, std::function<void*(void*)> func, void* data) {
+            pthread_mutex_lock(&work_mutexes[thread_id]);
+            work_functions[thread_id] = func;
+            work_data[thread_id] = data;
+            thread_busy[thread_id] = true;
+            pthread_cond_signal(&work_conditions[thread_id]);
+            pthread_mutex_unlock(&work_mutexes[thread_id]);
+        }
+        
+        void wait_for_completion() {
+            pthread_mutex_lock(&pool_mutex);
+            while (active_threads > 0) {
+                pthread_cond_wait(&pool_condition, &pool_mutex);
+            }
+            pthread_mutex_unlock(&pool_mutex);
+        }
+        
+        // Barrier synchronization for worker threads
+        void worker_barrier() {
+            pthread_mutex_lock(&barrier_mutex);
+            barrier_count++;
+            
+            if (barrier_count == threads.size()) {
+                barrier_count = 0;
+                barrier_generation++;
+                pthread_cond_broadcast(&barrier_condition);
+            } else {
+                int current_generation = barrier_generation;
+                while (current_generation == barrier_generation) {
+                    pthread_cond_wait(&barrier_condition, &barrier_mutex);
+                }
+            }
+            pthread_mutex_unlock(&barrier_mutex);
+        }
+        
+        // Critical section for worker threads
+        void worker_critical_section(std::function<void()> func) {
+            pthread_mutex_lock(&critical_mutex);
+            func();
+            pthread_mutex_unlock(&critical_mutex);
+        }
+    };
+    
+    std::unique_ptr<ThreadPool> thread_pool_;
+    
     // Barrier implementation
     struct Barrier {
         pthread_mutex_t mutex;
@@ -90,6 +250,10 @@ public:
             pthread_mutex_init(&mutexes_[i], nullptr);
             pthread_cond_init(&conditions_[i], nullptr);
         }
+        
+        // Initialize thread pool
+        thread_pool_ = make_unique<ThreadPool>(num_threads_);
+        thread_pool_->start_threads();
     }
     
     // Set number of threads at runtime
@@ -101,6 +265,9 @@ public:
                 pthread_cond_destroy(&conditions_[i]);
             }
             
+            // Clean up thread pool
+            thread_pool_.reset();
+            
             num_threads_ = num_threads;
             threads_.resize(num_threads_);
             mutexes_.resize(num_threads_);
@@ -110,6 +277,10 @@ public:
                 pthread_mutex_init(&mutexes_[i], nullptr);
                 pthread_cond_init(&conditions_[i], nullptr);
             }
+            
+            // Reinitialize thread pool
+            thread_pool_ = make_unique<ThreadPool>(num_threads_);
+            thread_pool_->start_threads();
         }
     }
     
@@ -136,7 +307,7 @@ private:
     int get_num_threads() const { return num_threads_; }
     
 public:
-    // Barrier synchronization
+    // Barrier synchronization - works with thread pool
     void barrier() {
         if (!barrier_) {
             barrier_ = make_unique<Barrier>(num_threads_);
@@ -144,14 +315,28 @@ public:
         barrier_->wait();
     }
     
-    // Critical section
+    // Critical section - works with thread pool
     void critical_section(std::function<void()> func) {
         static pthread_mutex_t critical_mutex = PTHREAD_MUTEX_INITIALIZER;
         pthread_mutex_lock(&critical_mutex);
         func();
         pthread_mutex_unlock(&critical_mutex);
     }
-    // Parallel for with reduction
+    
+    // Thread pool barrier and critical section for use within worker threads
+    void worker_barrier() {
+        if (thread_pool_) {
+            thread_pool_->worker_barrier();
+        }
+    }
+    
+    void worker_critical_section(std::function<void()> func) {
+        if (thread_pool_) {
+            thread_pool_->worker_critical_section(func);
+        }
+    }
+    
+    // Parallel for with reduction using thread pool
     template<typename Func>
     int64_t parallel_for_reduction(size_t count, Func func, int64_t initial_value = 0) {
         std::atomic<int64_t> result(initial_value);
@@ -178,15 +363,14 @@ public:
             return nullptr;
         };
         
+        // Use thread pool instead of creating new threads
         std::vector<ThreadData> thread_data(num_threads_);
         for (int i = 0; i < num_threads_; i++) {
             thread_data[i] = {&func, count, i, num_threads_, &local_results};
-            pthread_create(&threads_[i], nullptr, worker, &thread_data[i]);
+            thread_pool_->execute_work(i, worker, &thread_data[i]);
         }
         
-        for (int i = 0; i < num_threads_; i++) {
-            pthread_join(threads_[i], nullptr);
-        }
+        thread_pool_->wait_for_completion();
         
         int64_t total = initial_value;
         for (int64_t local : local_results) {
@@ -196,7 +380,7 @@ public:
         return total;
     }
     
-    // Parallel for without reduction
+    // Parallel for without reduction using thread pool
     template<typename Func>
     void parallel_for(size_t count, Func func) {
         struct ThreadData {
@@ -215,18 +399,17 @@ public:
             return nullptr;
         };
         
+        // Use thread pool instead of creating new threads
         std::vector<ThreadData> thread_data(num_threads_);
         for (int i = 0; i < num_threads_; i++) {
             thread_data[i] = {&func, count, i, num_threads_};
-            pthread_create(&threads_[i], nullptr, worker, &thread_data[i]);
+            thread_pool_->execute_work(i, worker, &thread_data[i]);
         }
         
-        for (int i = 0; i < num_threads_; i++) {
-            pthread_join(threads_[i], nullptr);
-        }
+        thread_pool_->wait_for_completion();
     }
     
-    // Parallel for with range-based work distribution (hides work distribution logic)
+    // Helper function for static block distribution using thread pool
     template<typename Func>
     void parallel_for_range(size_t count, Func func) {
         struct ThreadData {
@@ -249,18 +432,17 @@ public:
             return nullptr;
         };
         
+        // Use thread pool instead of creating new threads
         std::vector<ThreadData> thread_data(num_threads_);
         for (int i = 0; i < num_threads_; i++) {
             thread_data[i] = {&func, count, i, num_threads_};
-            pthread_create(&threads_[i], nullptr, worker, &thread_data[i]);
+            thread_pool_->execute_work(i, worker, &thread_data[i]);
         }
         
-        for (int i = 0; i < num_threads_; i++) {
-            pthread_join(threads_[i], nullptr);
-        }
+        thread_pool_->wait_for_completion();
     }
     
-    // Parallel for with range-based work distribution and reduction
+    // Helper function for static block distribution with reduction using thread pool
     template<typename Func>
     int64_t parallel_for_range_reduction(size_t count, Func func, int64_t initial_value = 0) {
         std::vector<int64_t> local_results(num_threads_, 0);
@@ -289,15 +471,14 @@ public:
             return nullptr;
         };
         
+        // Use thread pool instead of creating new threads
         std::vector<ThreadData> thread_data(num_threads_);
         for (int i = 0; i < num_threads_; i++) {
             thread_data[i] = {&func, count, i, num_threads_, &local_results};
-            pthread_create(&threads_[i], nullptr, worker, &thread_data[i]);
+            thread_pool_->execute_work(i, worker, &thread_data[i]);
         }
         
-        for (int i = 0; i < num_threads_; i++) {
-            pthread_join(threads_[i], nullptr);
-        }
+        thread_pool_->wait_for_completion();
         
         int64_t total = initial_value;
         for (int64_t local : local_results) {
@@ -307,7 +488,7 @@ public:
         return total;
     }
     
-    // Parallel region with thread-local storage
+    // Parallel region with thread-local storage using thread pool
     template<typename Func>
     int64_t parallel_region(Func func) {
         std::atomic<int64_t> result(0);
@@ -326,15 +507,14 @@ public:
             return nullptr;
         };
         
+        // Use thread pool instead of creating new threads
         std::vector<ThreadData> thread_data(num_threads_);
         for (int i = 0; i < num_threads_; i++) {
             thread_data[i] = {&func, i, num_threads_, &result};
-            pthread_create(&threads_[i], nullptr, worker, &thread_data[i]);
+            thread_pool_->execute_work(i, worker, &thread_data[i]);
         }
         
-        for (int i = 0; i < num_threads_; i++) {
-            pthread_join(threads_[i], nullptr);
-        }
+        thread_pool_->wait_for_completion();
         
         return result.load();
     }
@@ -376,5 +556,12 @@ void gapbs_set_num_threads(int num_threads);
 
 #define GAPBS_CRITICAL(func) \
     gapbs_pthreads.critical_section(func)
+
+// Worker thread versions for use within parallel work functions
+#define GAPBS_WORKER_BARRIER() \
+    gapbs_pthreads.worker_barrier()
+
+#define GAPBS_WORKER_CRITICAL(func) \
+    gapbs_pthreads.worker_critical_section(func)
 
 #endif  // GAPBS_PTHREADS_H_
