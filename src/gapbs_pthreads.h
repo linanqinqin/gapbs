@@ -16,15 +16,15 @@
 #include <cstring>
 
 // Pthreads-specific atomic operations with prefixes to avoid conflicts
+// Use compiler intrinsics directly for proper atomic operations
 template<typename T, typename U>
 T pthreads_fetch_and_add(T &x, U inc) {
-    return std::atomic_fetch_add(reinterpret_cast<std::atomic<T>*>(&x), static_cast<T>(inc));
+    return __sync_fetch_and_add(&x, static_cast<T>(inc));
 }
 
 template<typename T>
 bool pthreads_compare_and_swap(T &x, const T &old_val, const T &new_val) {
-    T expected = old_val;
-    return std::atomic_compare_exchange_strong(reinterpret_cast<std::atomic<T>*>(&x), &expected, new_val);
+    return __sync_bool_compare_and_swap(&x, old_val, new_val);
 }
 
 // Define macros to override atomic operations globally
