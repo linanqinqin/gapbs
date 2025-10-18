@@ -16,6 +16,10 @@
 #include "timer.h"
 #include "gapbs_pthreads.h"
 
+// Use pthreads-specific atomic operations
+using gapbs_pthreads_atomics::fetch_and_add;
+using gapbs_pthreads_atomics::compare_and_swap;
+
 
 /*
 GAP Benchmark Suite
