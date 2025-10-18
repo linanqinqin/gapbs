@@ -122,6 +122,7 @@ void QueueToBitmap(const SlidingQueue<NodeID> &queue, Bitmap &bm) {
 void BitmapToQueue(const Graph &g, const Bitmap &bm,
                    SlidingQueue<NodeID> &queue) {
   // Replace: #pragma omp parallel with thread-local QueueBuffer
+  int64_t dummy_result;
   GAPBS_PARALLEL_REGION(
     [&](int thread_id, int num_threads) -> int64_t {
       QueueBuffer<NodeID> lqueue(queue);
@@ -137,7 +138,7 @@ void BitmapToQueue(const Graph &g, const Bitmap &bm,
       }
       lqueue.flush();
       return 0; // No reduction needed
-    }, 0);
+    }, dummy_result);
   
   queue.slide_window();
 }

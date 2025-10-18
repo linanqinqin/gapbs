@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <thread>
 #include <memory>
+#include <utility>
 #include <cstdlib>
 #include <cstring>
 
@@ -70,6 +71,12 @@ private:
     
     std::unique_ptr<Barrier> barrier_;
     
+    // C++11 compatible make_unique implementation
+    template<typename T, typename... Args>
+    std::unique_ptr<T> make_unique(Args&&... args) {
+        return std::unique_ptr<T>(new T(std::forward<Args>(args)...));
+    }
+    
 public:
     explicit GAPBSPthreads(int num_threads = 0) 
         : num_threads_(num_threads ? num_threads : get_default_thread_count()) {
@@ -124,13 +131,6 @@ private:
         return std::thread::hardware_concurrency();
     }
     
-    ~GAPBSPthreads() {
-        for (int i = 0; i < num_threads_; i++) {
-            pthread_mutex_destroy(&mutexes_[i]);
-            pthread_cond_destroy(&conditions_[i]);
-        }
-    }
-    
     // Parallel for with reduction
     template<typename Func>
     int64_t parallel_for_reduction(size_t count, Func func, int64_t initial_value = 0) {
@@ -175,6 +175,25 @@ private:
         
         return total;
     }
+    
+    
+    // Barrier synchronization
+    void barrier() {
+        if (!barrier_) {
+            barrier_ = make_unique<Barrier>(num_threads_);
+        }
+        barrier_->wait();
+    }
+    
+    // Critical section
+    void critical_section(std::function<void()> func) {
+        static pthread_mutex_t critical_mutex = PTHREAD_MUTEX_INITIALIZER;
+        pthread_mutex_lock(&critical_mutex);
+        func();
+        pthread_mutex_unlock(&critical_mutex);
+    }
+    
+    int get_num_threads() const { return num_threads_; }
     
     // Parallel for without reduction
     template<typename Func>
@@ -238,23 +257,12 @@ private:
         return result.load();
     }
     
-    // Barrier synchronization
-    void barrier() {
-        if (!barrier_) {
-            barrier_ = std::make_unique<Barrier>(num_threads_);
+    ~GAPBSPthreads() {
+        for (int i = 0; i < num_threads_; i++) {
+            pthread_mutex_destroy(&mutexes_[i]);
+            pthread_cond_destroy(&conditions_[i]);
         }
-        barrier_->wait();
     }
-    
-    // Critical section
-    void critical_section(std::function<void()> func) {
-        static pthread_mutex_t critical_mutex = PTHREAD_MUTEX_INITIALIZER;
-        pthread_mutex_lock(&critical_mutex);
-        func();
-        pthread_mutex_unlock(&critical_mutex);
-    }
-    
-    int get_num_threads() const { return num_threads_; }
 };
 
 // Global instance for easy access
