@@ -15,13 +15,9 @@
 #include "timer.h"
 #include "gapbs_pthreads.h"
 
-// Undefine the conflicting atomic operations from platform_atomics.h
-#undef fetch_and_add
-#undef compare_and_swap
-
-// Use pthreads-specific atomic operations
-using gapbs_pthreads_atomics::fetch_and_add;
-using gapbs_pthreads_atomics::compare_and_swap;
+// Use pthreads-specific atomic operations with prefixes
+#define fetch_and_add pthreads_fetch_and_add
+#define compare_and_swap pthreads_compare_and_swap
 
 
 /*

@@ -15,19 +15,16 @@
 #include <cstdlib>
 #include <cstring>
 
-// Pthreads-specific atomic operations
-// Override the platform_atomics.h implementations for pthreads
-namespace gapbs_pthreads_atomics {
-    template<typename T, typename U>
-    T fetch_and_add(T &x, U inc) {
-        return std::atomic_fetch_add(reinterpret_cast<std::atomic<T>*>(&x), static_cast<T>(inc));
-    }
-    
-    template<typename T>
-    bool compare_and_swap(T &x, const T &old_val, const T &new_val) {
-        T expected = old_val;
-        return std::atomic_compare_exchange_strong(reinterpret_cast<std::atomic<T>*>(&x), &expected, new_val);
-    }
+// Pthreads-specific atomic operations with prefixes to avoid conflicts
+template<typename T, typename U>
+T pthreads_fetch_and_add(T &x, U inc) {
+    return std::atomic_fetch_add(reinterpret_cast<std::atomic<T>*>(&x), static_cast<T>(inc));
+}
+
+template<typename T>
+bool pthreads_compare_and_swap(T &x, const T &old_val, const T &new_val) {
+    T expected = old_val;
+    return std::atomic_compare_exchange_strong(reinterpret_cast<std::atomic<T>*>(&x), &expected, new_val);
 }
 
 /*
