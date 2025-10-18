@@ -52,16 +52,26 @@ int64_t BUStep(const Graph &g, pvector<NodeID> &parent, Bitmap &front,
   next.reset();
   
   // Replace: #pragma omp parallel for reduction(+ : awake_count) schedule(dynamic, 1024)
-  GAPBS_PARALLEL_FOR_REDUCTION(g.num_nodes(), 
-    [&](NodeID u) -> int64_t {
+  // Use GAPBS_PARALLEL_REGION to ensure proper reduction and avoid race conditions
+  GAPBS_PARALLEL_REGION(
+    [&](int thread_id, int num_threads) -> int64_t {
       int64_t local_count = 0;
-      if (parent[u] < 0) {
-        for (NodeID v : g.in_neigh(u)) {
-          if (front.get_bit(v)) {
-            parent[u] = v;
-            local_count++;
-            next.set_bit(u);
-            break;
+      
+      // Distribute work among threads using static block distribution
+      // This matches OpenMP's behavior for correctness
+      NodeID start = (thread_id * g.num_nodes()) / num_threads;
+      NodeID end = ((thread_id + 1) * g.num_nodes()) / num_threads;
+      
+      for (NodeID u = start; u < end; u++) {
+        if (parent[u] < 0) {
+          for (NodeID v : g.in_neigh(u)) {
+            if (front.get_bit(v)) {
+              parent[u] = v;
+              local_count++;
+              // Use atomic bitmap operation to avoid race conditions
+              next.set_bit_atomic(u);
+              break;
+            }
           }
         }
       }
@@ -86,7 +96,7 @@ int64_t TDStep(const Graph &g, pvector<NodeID> &parent,
       // Use static block distribution to match OpenMP default behavior
       size_t queue_size = queue.size();
       size_t start = (thread_id * queue_size) / num_threads;
-      size_t end = (thread_id == num_threads - 1) ? queue_size : ((thread_id + 1) * queue_size) / num_threads;
+      size_t end = ((thread_id + 1) * queue_size) / num_threads;
       
       for (size_t i = start; i < end; i++) {
         auto q_iter = queue.begin() + i;
@@ -130,7 +140,7 @@ void BitmapToQueue(const Graph &g, const Bitmap &bm,
       
       // Distribute work among threads
       NodeID start = (thread_id * g.num_nodes()) / num_threads;
-      NodeID end = (thread_id == num_threads - 1) ? g.num_nodes() : ((thread_id + 1) * g.num_nodes()) / num_threads;
+      NodeID end = ((thread_id + 1) * g.num_nodes()) / num_threads;
       
       for (NodeID n = start; n < end; n++) {
         if (bm.get_bit(n)) {
