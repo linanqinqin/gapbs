@@ -83,10 +83,13 @@ int64_t TDStep(const Graph &g, pvector<NodeID> &parent,
       QueueBuffer<NodeID> lqueue(queue);
       
       // Distribute queue iterations among threads (like OpenMP for does)
-      // Use round-robin distribution to match OpenMP behavior
+      // Use static block distribution to match OpenMP default behavior
       size_t queue_size = queue.size();
-        for (size_t i = thread_id; i < queue_size; i += num_threads) {
-          auto q_iter = queue.begin() + i;
+      size_t start = (thread_id * queue_size) / num_threads;
+      size_t end = ((thread_id + 1) * queue_size) / num_threads;
+      
+      for (size_t i = start; i < end; i++) {
+        auto q_iter = queue.begin() + i;
           NodeID u = *q_iter;
           for (NodeID v : g.out_neigh(u)) {
             NodeID curr_val = parent[v];
