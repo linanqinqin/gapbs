@@ -374,11 +374,19 @@ public:
     }
 };
 
-// Global instance for easy access
-extern PthreadPP p3;
+// Singleton instance for global access
+inline PthreadPP& get_p3_instance() {
+    static PthreadPP instance;
+    return instance;
+}
+
+// Global reference for easy access
+#define p3 get_p3_instance()
 
 // Initialize with specific number of threads
-void p3_set_num_threads(int num_threads);
+inline void p3_set_num_threads(int num_threads) {
+    get_p3_instance().set_num_threads(num_threads);
+}
 
 // P3 Macros to replace OpenMP pragmas
 #define P3_PARALLEL_FOR_REDUCTION(count, func, result) \

@@ -1,6 +1,6 @@
 # See LICENSE.txt for license details.
 
-CXX_FLAGS += -std=c++11 -O3 -Wall -lpthread src/pthreadpp.cc
+CXX_FLAGS += -std=c++11 -O3 -Wall -lpthread
 
 # P3 (pthreadpp) is now the default parallelization framework
 # OpenMP has been completely replaced with P3
@@ -11,7 +11,7 @@ SUITE = $(KERNELS) converter
 .PHONY: all
 all: $(SUITE)
 
-% : src/%.cc src/*.h src/pthreadpp.cc
+% : src/%.cc src/*.h
 	$(CXX) $(CXX_FLAGS) $< -o $@
 
 # Testing
