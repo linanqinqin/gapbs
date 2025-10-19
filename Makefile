@@ -1,20 +1,9 @@
 # See LICENSE.txt for license details.
 
 CXX_FLAGS += -std=c++11 -O3 -Wall -lpthread src/pthreadpp.cc
-PAR_FLAG = -fopenmp
 
-ifneq (,$(findstring icpc,$(CXX)))
-	PAR_FLAG = -openmp
-endif
-
-ifneq (,$(findstring sunCC,$(CXX)))
-	CXX_FLAGS = -std=c++11 -xO3 -m64 -xtarget=native
-	PAR_FLAG = -xopenmp
-endif
-
-ifneq ($(SERIAL), 1)
-	CXX_FLAGS += $(PAR_FLAG)
-endif
+# P3 (pthreadpp) is now the default parallelization framework
+# OpenMP has been completely replaced with P3
 
 KERNELS = bc bfs cc cc_sv pr pr_spmv sssp tc
 SUITE = $(KERNELS) converter
