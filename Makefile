@@ -1,6 +1,6 @@
 # See LICENSE.txt for license details.
 
-CXX_FLAGS += -std=c++11 -O3 -Wall
+CXX_FLAGS += -std=c++11 -O3 -Wall -lpthread src/gapbs_pthreads.cc
 PAR_FLAG = -fopenmp
 
 ifneq (,$(findstring icpc,$(CXX)))
@@ -22,7 +22,7 @@ SUITE = $(KERNELS) converter
 .PHONY: all
 all: $(SUITE)
 
-% : src/%.cc src/*.h
+% : src/%.cc src/*.h src/gapbs_pthreads.cc
 	$(CXX) $(CXX_FLAGS) $< -o $@
 
 # Testing
