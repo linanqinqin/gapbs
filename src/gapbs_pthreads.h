@@ -151,6 +151,10 @@ private:
         }
         
         void execute_work(int thread_id, std::function<void*(void*)> func, void* data) {
+            pthread_mutex_lock(&pool_mutex);
+            active_threads++;
+            pthread_mutex_unlock(&pool_mutex);
+            
             pthread_mutex_lock(&work_mutexes[thread_id]);
             work_functions[thread_id] = func;
             work_data[thread_id] = data;
