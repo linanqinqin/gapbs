@@ -19,6 +19,7 @@
 #include "reader.h"
 #include "timer.h"
 #include "util.h"
+#include "pthreadpp.h"
 
 
 /*
@@ -68,25 +69,28 @@ class BuilderBase {
 
   NodeID_ FindMaxNodeID(const EdgeList &el) {
     NodeID_ max_seen = 0;
-    #pragma omp parallel for reduction(max : max_seen)
-    for (auto it = el.begin(); it < el.end(); it++) {
-      Edge e = *it;
-      max_seen = std::max(max_seen, e.u);
-      max_seen = std::max(max_seen, (NodeID_) e.v);
-    }
+    // Replace: #pragma omp parallel for reduction(max : max_seen)
+    P3_PARALLEL_FOR_MAX_REDUCTION(el.size(),
+      [&](size_t i) -> NodeID_ {
+        auto it = el.begin() + i;
+        Edge e = *it;
+        return std::max(e.u, e.v);
+      }, max_seen, 0);
     return max_seen;
   }
 
   pvector<NodeID_> CountDegrees(const EdgeList &el, bool transpose) {
     pvector<NodeID_> degrees(num_nodes_, 0);
-    #pragma omp parallel for
-    for (auto it = el.begin(); it < el.end(); it++) {
-      Edge e = *it;
-      if (symmetrize_ || (!symmetrize_ && !transpose))
-        fetch_and_add(degrees[e.u], 1);
-      if ((symmetrize_ && !in_place_) || (!symmetrize_ && transpose))
-        fetch_and_add(degrees[(NodeID_) e.v], 1);
-    }
+    // Replace: #pragma omp parallel for
+    P3_PARALLEL_FOR(el.size(),
+      [&](size_t i) {
+        auto it = el.begin() + i;
+        Edge e = *it;
+        if (symmetrize_ || (!symmetrize_ && !transpose))
+          fetch_and_add(degrees[e.u], 1);
+        if ((symmetrize_ && !in_place_) || (!symmetrize_ && transpose))
+          fetch_and_add(degrees[(NodeID_) e.v], 1);
+      });
     return degrees;
   }
 
@@ -107,14 +111,15 @@ class BuilderBase {
     const size_t block_size = 1<<20;
     const size_t num_blocks = (degrees.size() + block_size - 1) / block_size;
     pvector<SGOffset> local_sums(num_blocks);
-    #pragma omp parallel for
-    for (size_t block=0; block < num_blocks; block++) {
-      SGOffset lsum = 0;
-      size_t block_end = std::min((block + 1) * block_size, degrees.size());
-      for (size_t i=block * block_size; i < block_end; i++)
-        lsum += degrees[i];
-      local_sums[block] = lsum;
-    }
+    // Replace: #pragma omp parallel for
+    P3_PARALLEL_FOR(num_blocks,
+      [&](size_t block) {
+        SGOffset lsum = 0;
+        size_t block_end = std::min((block + 1) * block_size, degrees.size());
+        for (size_t i=block * block_size; i < block_end; i++)
+          lsum += degrees[i];
+        local_sums[block] = lsum;
+      });
     pvector<SGOffset> bulk_prefix(num_blocks+1);
     SGOffset total = 0;
     for (size_t block=0; block < num_blocks; block++) {
@@ -123,15 +128,16 @@ class BuilderBase {
     }
     bulk_prefix[num_blocks] = total;
     pvector<SGOffset> prefix(degrees.size() + 1);
-    #pragma omp parallel for
-    for (size_t block=0; block < num_blocks; block++) {
-      SGOffset local_total = bulk_prefix[block];
-      size_t block_end = std::min((block + 1) * block_size, degrees.size());
-      for (size_t i=block * block_size; i < block_end; i++) {
-        prefix[i] = local_total;
-        local_total += degrees[i];
-      }
-    }
+    // Replace: #pragma omp parallel for
+    P3_PARALLEL_FOR(num_blocks,
+      [&](size_t block) {
+        SGOffset local_total = bulk_prefix[block];
+        size_t block_end = std::min((block + 1) * block_size, degrees.size());
+        for (size_t i=block * block_size; i < block_end; i++) {
+          prefix[i] = local_total;
+          local_total += degrees[i];
+        }
+      });
     prefix[degrees.size()] = bulk_prefix[num_blocks];
     return prefix;
   }
@@ -141,32 +147,47 @@ class BuilderBase {
   void SquishCSR(const CSRGraph<NodeID_, DestID_, invert> &g, bool transpose,
                  DestID_*** sq_index, DestID_** sq_neighs) {
     pvector<NodeID_> diffs(g.num_nodes());
-    DestID_ *n_start, *n_end;
-    #pragma omp parallel for private(n_start, n_end)
-    for (NodeID_ n=0; n < g.num_nodes(); n++) {
-      if (transpose) {
-        n_start = g.in_neigh(n).begin();
-        n_end = g.in_neigh(n).end();
-      } else {
-        n_start = g.out_neigh(n).begin();
-        n_end = g.out_neigh(n).end();
-      }
-      std::sort(n_start, n_end);
-      DestID_ *new_end = std::unique(n_start, n_end);
-      new_end = std::remove(n_start, new_end, n);
-      diffs[n] = new_end - n_start;
-    }
+    // Replace: #pragma omp parallel for private(n_start, n_end)
+    P3_PARALLEL_REGION_PRIVATE(
+      [&](int thread_id, int num_threads) {
+        // Distribute nodes among threads
+        NodeID_ start_node = (thread_id * g.num_nodes()) / num_threads;
+        NodeID_ end_node = ((thread_id + 1) * g.num_nodes()) / num_threads;
+        
+        for (NodeID_ n = start_node; n < end_node; n++) {
+          DestID_ *n_start, *n_end;
+          if (transpose) {
+            n_start = g.in_neigh(n).begin();
+            n_end = g.in_neigh(n).end();
+          } else {
+            n_start = g.out_neigh(n).begin();
+            n_end = g.out_neigh(n).end();
+          }
+          std::sort(n_start, n_end);
+          DestID_ *new_end = std::unique(n_start, n_end);
+          new_end = std::remove(n_start, new_end, n);
+          diffs[n] = new_end - n_start;
+        }
+      });
     pvector<SGOffset> sq_offsets = ParallelPrefixSum(diffs);
     *sq_neighs = new DestID_[sq_offsets[g.num_nodes()]];
     *sq_index = CSRGraph<NodeID_, DestID_>::GenIndex(sq_offsets, *sq_neighs);
-    #pragma omp parallel for private(n_start)
-    for (NodeID_ n=0; n < g.num_nodes(); n++) {
-      if (transpose)
-        n_start = g.in_neigh(n).begin();
-      else
-        n_start = g.out_neigh(n).begin();
-      std::copy(n_start, n_start+diffs[n], (*sq_index)[n]);
-    }
+    // Replace: #pragma omp parallel for private(n_start)
+    P3_PARALLEL_REGION_PRIVATE(
+      [&](int thread_id, int num_threads) {
+        // Distribute nodes among threads
+        NodeID_ start_node = (thread_id * g.num_nodes()) / num_threads;
+        NodeID_ end_node = ((thread_id + 1) * g.num_nodes()) / num_threads;
+        
+        for (NodeID_ n = start_node; n < end_node; n++) {
+          DestID_ *n_start;
+          if (transpose)
+            n_start = g.in_neigh(n).begin();
+          else
+            n_start = g.out_neigh(n).begin();
+          std::copy(n_start, n_start+diffs[n], (*sq_index)[n]);
+        }
+      });
   }
 
   CSRGraph<NodeID_, DestID_, invert> SquishGraph(
@@ -303,15 +324,17 @@ class BuilderBase {
     pvector<SGOffset> offsets = ParallelPrefixSum(degrees);
     *neighs = new DestID_[offsets[num_nodes_]];
     *index = CSRGraph<NodeID_, DestID_>::GenIndex(offsets, *neighs);
-    #pragma omp parallel for
-    for (auto it = el.begin(); it < el.end(); it++) {
-      Edge e = *it;
-      if (symmetrize_ || (!symmetrize_ && !transpose))
-        (*neighs)[fetch_and_add(offsets[e.u], 1)] = e.v;
-      if (symmetrize_ || (!symmetrize_ && transpose))
-        (*neighs)[fetch_and_add(offsets[static_cast<NodeID_>(e.v)], 1)] =
-            GetSource(e);
-    }
+    // Replace: #pragma omp parallel for
+    P3_PARALLEL_FOR(el.size(),
+      [&](size_t i) {
+        auto it = el.begin() + i;
+        Edge e = *it;
+        if (symmetrize_ || (!symmetrize_ && !transpose))
+          (*neighs)[fetch_and_add(offsets[e.u], 1)] = e.v;
+        if (symmetrize_ || (!symmetrize_ && transpose))
+          (*neighs)[fetch_and_add(offsets[static_cast<NodeID_>(e.v)], 1)] =
+              GetSource(e);
+      });
   }
 
   CSRGraph<NodeID_, DestID_, invert> MakeGraphFromEL(EdgeList &el) {
@@ -375,27 +398,31 @@ class BuilderBase {
     t.Start();
     typedef std::pair<int64_t, NodeID_> degree_node_p;
     pvector<degree_node_p> degree_id_pairs(g.num_nodes());
-    #pragma omp parallel for
-    for (NodeID_ n=0; n < g.num_nodes(); n++)
-      degree_id_pairs[n] = std::make_pair(g.out_degree(n), n);
+    // Replace: #pragma omp parallel for
+    P3_PARALLEL_FOR(g.num_nodes(),
+      [&](NodeID_ n) {
+        degree_id_pairs[n] = std::make_pair(g.out_degree(n), n);
+      });
     std::sort(degree_id_pairs.begin(), degree_id_pairs.end(),
               std::greater<degree_node_p>());
     pvector<NodeID_> degrees(g.num_nodes());
     pvector<NodeID_> new_ids(g.num_nodes());
-    #pragma omp parallel for
-    for (NodeID_ n=0; n < g.num_nodes(); n++) {
-      degrees[n] = degree_id_pairs[n].first;
-      new_ids[degree_id_pairs[n].second] = n;
-    }
+    // Replace: #pragma omp parallel for
+    P3_PARALLEL_FOR(g.num_nodes(),
+      [&](NodeID_ n) {
+        degrees[n] = degree_id_pairs[n].first;
+        new_ids[degree_id_pairs[n].second] = n;
+      });
     pvector<SGOffset> offsets = ParallelPrefixSum(degrees);
     DestID_* neighs = new DestID_[offsets[g.num_nodes()]];
     DestID_** index = CSRGraph<NodeID_, DestID_>::GenIndex(offsets, neighs);
-    #pragma omp parallel for
-    for (NodeID_ u=0; u < g.num_nodes(); u++) {
-      for (NodeID_ v : g.out_neigh(u))
-        neighs[offsets[new_ids[u]]++] = new_ids[v];
-      std::sort(index[new_ids[u]], index[new_ids[u]+1]);
-    }
+    // Replace: #pragma omp parallel for
+    P3_PARALLEL_FOR(g.num_nodes(),
+      [&](NodeID_ u) {
+        for (NodeID_ v : g.out_neigh(u))
+          neighs[offsets[new_ids[u]]++] = new_ids[v];
+        std::sort(index[new_ids[u]], index[new_ids[u]+1]);
+      });
     t.Stop();
     PrintTime("Relabel", t.Seconds());
     return CSRGraph<NodeID_, DestID_, invert>(g.num_nodes(), index, neighs);

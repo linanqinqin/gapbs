@@ -190,6 +190,54 @@ public:
         return total;
     }
     
+    // Parallel for with max reduction
+    template<typename Func, typename T>
+    T parallel_for_max_reduction(size_t count, Func func, T initial_value) {
+        std::vector<T> local_results(num_threads_, initial_value);
+        
+        struct ThreadData {
+            Func* func;
+            size_t count;
+            int thread_id;
+            int num_threads;
+            std::vector<T>* local_results;
+        };
+        
+        auto worker = [](void* arg) -> void* {
+            ThreadData* data = static_cast<ThreadData*>(arg);
+            T local_max = data->local_results->at(0); // Use initial value
+            
+            for (size_t i = data->thread_id; i < data->count; i += data->num_threads) {
+                T result = (*data->func)(i);
+                if (result > local_max) {
+                    local_max = result;
+                }
+            }
+            
+            (*data->local_results)[data->thread_id] = local_max;
+            return nullptr;
+        };
+        
+        std::vector<ThreadData> thread_data(num_threads_);
+        for (int i = 0; i < num_threads_; i++) {
+            thread_data[i] = {&func, count, i, num_threads_, &local_results};
+            pthread_create(&threads_[i], nullptr, worker, &thread_data[i]);
+        }
+        
+        for (int i = 0; i < num_threads_; i++) {
+            pthread_join(threads_[i], nullptr);
+        }
+        
+        T max_result = initial_value;
+        for (T local : local_results) {
+            if (local > max_result) {
+                max_result = local;
+            }
+        }
+        
+        return max_result;
+    }
+    
     // Parallel for without reduction
     template<typename Func>
     void parallel_for(size_t count, Func func) {
@@ -252,6 +300,71 @@ public:
         return result.load();
     }
     
+    // Parallel region with private variables support
+    template<typename Func>
+    void parallel_region_private(Func func) {
+        struct ThreadData {
+            Func* func;
+            int thread_id;
+            int num_threads;
+        };
+        
+        auto worker = [](void* arg) -> void* {
+            ThreadData* data = static_cast<ThreadData*>(arg);
+            (*data->func)(data->thread_id, data->num_threads);
+            return nullptr;
+        };
+        
+        std::vector<ThreadData> thread_data(num_threads_);
+        for (int i = 0; i < num_threads_; i++) {
+            thread_data[i] = {&func, i, num_threads_};
+            pthread_create(&threads_[i], nullptr, worker, &thread_data[i]);
+        }
+        
+        for (int i = 0; i < num_threads_; i++) {
+            pthread_join(threads_[i], nullptr);
+        }
+    }
+    
+    // Parallel for with dynamic scheduling
+    template<typename Func>
+    void parallel_for_dynamic(size_t count, Func func, size_t chunk_size = 64) {
+        struct ThreadData {
+            Func* func;
+            size_t count;
+            size_t chunk_size;
+            int thread_id;
+            int num_threads;
+            std::atomic<size_t> next_chunk;
+        };
+        
+        auto worker = [](void* arg) -> void* {
+            ThreadData* data = static_cast<ThreadData*>(arg);
+            
+            while (true) {
+                size_t chunk_start = data->next_chunk.fetch_add(data->chunk_size);
+                if (chunk_start >= data->count) break;
+                
+                size_t chunk_end = std::min(chunk_start + data->chunk_size, data->count);
+                for (size_t i = chunk_start; i < chunk_end; i++) {
+                    (*data->func)(i);
+                }
+            }
+            return nullptr;
+        };
+        
+        std::atomic<size_t> next_chunk(0);
+        std::vector<ThreadData> thread_data(num_threads_);
+        for (int i = 0; i < num_threads_; i++) {
+            thread_data[i] = {&func, count, chunk_size, i, num_threads_, &next_chunk};
+            pthread_create(&threads_[i], nullptr, worker, &thread_data[i]);
+        }
+        
+        for (int i = 0; i < num_threads_; i++) {
+            pthread_join(threads_[i], nullptr);
+        }
+    }
+    
 public:
     ~PthreadPP() {
         for (int i = 0; i < num_threads_; i++) {
@@ -271,11 +384,20 @@ void p3_set_num_threads(int num_threads);
 #define P3_PARALLEL_FOR_REDUCTION(count, func, result) \
     result = p3.parallel_for_reduction(count, func, 0)
 
+#define P3_PARALLEL_FOR_MAX_REDUCTION(count, func, result, initial_value) \
+    result = p3.parallel_for_max_reduction(count, func, initial_value)
+
 #define P3_PARALLEL_FOR(count, func) \
     p3.parallel_for(count, func)
 
+#define P3_PARALLEL_FOR_DYNAMIC(count, func, chunk_size) \
+    p3.parallel_for_dynamic(count, func, chunk_size)
+
 #define P3_PARALLEL_REGION(func, result) \
     result = p3.parallel_region(func)
+
+#define P3_PARALLEL_REGION_PRIVATE(func) \
+    p3.parallel_region_private(func)
 
 #define P3_BARRIER() \
     p3.barrier()

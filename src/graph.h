@@ -12,6 +12,7 @@
 
 #include "pvector.h"
 #include "util.h"
+#include "pthreadpp.h"
 
 
 /*
@@ -242,9 +243,11 @@ class CSRGraph {
   static DestID_** GenIndex(const pvector<SGOffset> &offsets, DestID_* neighs) {
     NodeID_ length = offsets.size();
     DestID_** index = new DestID_*[length];
-    #pragma omp parallel for
-    for (NodeID_ n=0; n < length; n++)
-      index[n] = neighs + offsets[n];
+    // Replace: #pragma omp parallel for
+    P3_PARALLEL_FOR(length,
+      [&](NodeID_ n) {
+        index[n] = neighs + offsets[n];
+      });
     return index;
   }
 

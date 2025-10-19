@@ -5,6 +5,7 @@
 #define PVECTOR_H_
 
 #include <algorithm>
+#include "pthreadpp.h"
 
 
 /*
@@ -38,9 +39,11 @@ class pvector {
 
   pvector(iterator copy_begin, iterator copy_end)
       : pvector(copy_end - copy_begin) {
-    #pragma omp parallel for
-    for (size_t i=0; i < capacity(); i++)
-      start_[i] = copy_begin[i];
+    // Replace: #pragma omp parallel for
+    P3_PARALLEL_FOR(capacity(),
+      [&](size_t i) {
+        start_[i] = copy_begin[i];
+      });
   }
 
   // don't want this to be copied, too much data to move
@@ -83,9 +86,11 @@ class pvector {
   void reserve(size_t num_elements) {
     if (num_elements > capacity()) {
       T_ *new_range = new T_[num_elements];
-      #pragma omp parallel for
-      for (size_t i=0; i < size(); i++)
-        new_range[i] = start_[i];
+      // Replace: #pragma omp parallel for
+      P3_PARALLEL_FOR(size(),
+        [&](size_t i) {
+          new_range[i] = start_[i];
+        });
       end_size_ = new_range + size();
       delete[] start_;
       start_ = new_range;
@@ -130,9 +135,11 @@ class pvector {
   }
 
   void fill(T_ init_val) {
-    #pragma omp parallel for
-    for (T_* ptr=start_; ptr < end_size_; ptr++)
-      *ptr = init_val;
+    // Replace: #pragma omp parallel for
+    P3_PARALLEL_FOR(size(),
+      [&](size_t i) {
+        start_[i] = init_val;
+      });
   }
 
   size_t capacity() const {

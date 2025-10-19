@@ -13,6 +13,7 @@
 #include "graph.h"
 #include "pvector.h"
 #include "util.h"
+#include "pthreadpp.h"
 
 
 /*
@@ -93,29 +94,35 @@ class Generator {
   void PermuteIDs(EdgeList &el) {
     pvector<NodeID_> permutation(num_nodes_);
     rng_t_ rng(kRandSeed);
-    #pragma omp parallel for
-    for (NodeID_ n=0; n < num_nodes_; n++)
-      permutation[n] = n;
+    // Replace: #pragma omp parallel for
+    P3_PARALLEL_FOR(num_nodes_,
+      [&](NodeID_ n) {
+        permutation[n] = n;
+      });
     shuffle(permutation.begin(), permutation.end(), rng);
-    #pragma omp parallel for
-    for (int64_t e=0; e < num_edges_; e++)
-      el[e] = Edge(permutation[el[e].u], permutation[el[e].v]);
+    // Replace: #pragma omp parallel for
+    P3_PARALLEL_FOR(num_edges_,
+      [&](int64_t e) {
+        el[e] = Edge(permutation[el[e].u], permutation[el[e].v]);
+      });
   }
 
   EdgeList MakeUniformEL() {
     EdgeList el(num_edges_);
-    #pragma omp parallel
-    {
-      rng_t_ rng;
-      UniDist<NodeID_, rng_t_> udist(num_nodes_-1, rng);
-      #pragma omp for
-      for (int64_t block=0; block < num_edges_; block+=block_size) {
-        rng.seed(kRandSeed + block/block_size);
-        for (int64_t e=block; e < std::min(block+block_size, num_edges_); e++) {
-          el[e] = Edge(udist(), udist());
+    // Replace: #pragma omp parallel with nested for
+    P3_PARALLEL_REGION_PRIVATE(
+      [&](int thread_id, int num_threads) {
+        rng_t_ rng;
+        UniDist<NodeID_, rng_t_> udist(num_nodes_-1, rng);
+        
+        // Distribute blocks among threads (like OpenMP for)
+        for (int64_t block = thread_id; block < num_edges_; block += num_threads * block_size) {
+          rng.seed(kRandSeed + block/block_size);
+          for (int64_t e = block; e < std::min(block + block_size, num_edges_); e++) {
+            el[e] = Edge(udist(), udist());
+          }
         }
-      }
-    }
+      });
     return el;
   }
 
@@ -123,31 +130,33 @@ class Generator {
     const uint32_t max = std::numeric_limits<uint32_t>::max();
     const uint32_t A = 0.57*max, B = 0.19*max, C = 0.19*max;
     EdgeList el(num_edges_);
-    #pragma omp parallel
-    {
-      std::mt19937 rng;
-      #pragma omp for
-      for (int64_t block=0; block < num_edges_; block+=block_size) {
-        rng.seed(kRandSeed + block/block_size);
-        for (int64_t e=block; e < std::min(block+block_size, num_edges_); e++) {
-          NodeID_ src = 0, dst = 0;
-          for (int depth=0; depth < scale_; depth++) {
-            uint32_t rand_point = rng();
-            src = src << 1;
-            dst = dst << 1;
-            if (rand_point < A+B) {
-              if (rand_point > A)
-                dst++;
-            } else {
-              src++;
-              if (rand_point > A+B+C)
-                dst++;
+    // Replace: #pragma omp parallel with nested for
+    P3_PARALLEL_REGION_PRIVATE(
+      [&](int thread_id, int num_threads) {
+        std::mt19937 rng;
+        
+        // Distribute blocks among threads (like OpenMP for)
+        for (int64_t block = thread_id; block < num_edges_; block += num_threads * block_size) {
+          rng.seed(kRandSeed + block/block_size);
+          for (int64_t e = block; e < std::min(block + block_size, num_edges_); e++) {
+            NodeID_ src = 0, dst = 0;
+            for (int depth=0; depth < scale_; depth++) {
+              uint32_t rand_point = rng();
+              src = src << 1;
+              dst = dst << 1;
+              if (rand_point < A+B) {
+                if (rand_point > A)
+                  dst++;
+              } else {
+                src++;
+                if (rand_point > A+B+C)
+                  dst++;
+              }
             }
+            el[e] = Edge(src, dst);
           }
-          el[e] = Edge(src, dst);
         }
-      }
-    }
+      });
     PermuteIDs(el);
     // TIME_PRINT("Shuffle", std::shuffle(el.begin(), el.end(),
     //                                    std::mt19937()));
@@ -171,19 +180,21 @@ class Generator {
 
   // Overwrites existing weights with random from [1,255]
   static void InsertWeights(pvector<WEdge> &el) {
-    #pragma omp parallel
-    {
-      rng_t_ rng;
-      UniDist<WeightT_, rng_t_> udist(254, rng);
-      int64_t el_size = el.size();
-      #pragma omp for
-      for (int64_t block=0; block < el_size; block+=block_size) {
-        rng.seed(kRandSeed + block/block_size);
-        for (int64_t e=block; e < std::min(block+block_size, el_size); e++) {
-          el[e].v.w = static_cast<WeightT_>(udist()+1);
+    // Replace: #pragma omp parallel with nested for
+    P3_PARALLEL_REGION_PRIVATE(
+      [&](int thread_id, int num_threads) {
+        rng_t_ rng;
+        UniDist<WeightT_, rng_t_> udist(254, rng);
+        int64_t el_size = el.size();
+        
+        // Distribute blocks among threads (like OpenMP for)
+        for (int64_t block = thread_id; block < el_size; block += num_threads * block_size) {
+          rng.seed(kRandSeed + block/block_size);
+          for (int64_t e = block; e < std::min(block + block_size, el_size); e++) {
+            el[e].v.w = static_cast<WeightT_>(udist()+1);
+          }
         }
-      }
-    }
+      });
   }
 
  private:
