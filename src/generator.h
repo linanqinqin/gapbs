@@ -116,7 +116,7 @@ class Generator {
         UniDist<NodeID_, rng_t_> udist(num_nodes_-1, rng);
         
         // Distribute blocks among threads (like OpenMP for)
-        for (int64_t block = thread_id; block < num_edges_; block += num_threads * block_size) {
+        for (int64_t block = thread_id * block_size; block < num_edges_; block += num_threads * block_size) {
           rng.seed(kRandSeed + block/block_size);
           for (int64_t e = block; e < std::min(block + block_size, num_edges_); e++) {
             el[e] = Edge(udist(), udist());
@@ -136,7 +136,7 @@ class Generator {
         std::mt19937 rng;
         
         // Distribute blocks among threads (like OpenMP for)
-        for (int64_t block = thread_id; block < num_edges_; block += num_threads * block_size) {
+        for (int64_t block = thread_id * block_size; block < num_edges_; block += num_threads * block_size) {
           rng.seed(kRandSeed + block/block_size);
           for (int64_t e = block; e < std::min(block + block_size, num_edges_); e++) {
             NodeID_ src = 0, dst = 0;
@@ -188,7 +188,7 @@ class Generator {
         int64_t el_size = el.size();
         
         // Distribute blocks among threads (like OpenMP for)
-        for (int64_t block = thread_id; block < el_size; block += num_threads * block_size) {
+        for (int64_t block = thread_id * block_size; block < el_size; block += num_threads * block_size) {
           rng.seed(kRandSeed + block/block_size);
           for (int64_t e = block; e < std::min(block + block_size, el_size); e++) {
             el[e].v.w = static_cast<WeightT_>(udist()+1);
