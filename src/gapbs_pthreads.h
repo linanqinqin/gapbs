@@ -82,7 +82,7 @@ private:
             shutdown = true;
             pthread_cond_broadcast(&pool_condition);
             
-            for (int i = 0; i < threads.size(); i++) {
+            for (size_t i = 0; i < threads.size(); i++) {
                 pthread_join(threads[i], nullptr);
                 pthread_mutex_destroy(&work_mutexes[i]);
                 pthread_cond_destroy(&work_conditions[i]);
@@ -96,7 +96,7 @@ private:
         }
         
         void start_threads() {
-            for (int i = 0; i < threads.size(); i++) {
+            for (size_t i = 0; i < threads.size(); i++) {
                 pthread_create(&threads[i], nullptr, worker_thread, this);
             }
         }
@@ -107,9 +107,9 @@ private:
             
             // Find our thread ID
             pthread_mutex_lock(&pool->pool_mutex);
-            for (int i = 0; i < pool->threads.size(); i++) {
+            for (size_t i = 0; i < pool->threads.size(); i++) {
                 if (pthread_equal(pthread_self(), pool->threads[i])) {
-                    thread_id = i;
+                    thread_id = static_cast<int>(i);
                     break;
                 }
             }
@@ -172,7 +172,7 @@ private:
             pthread_mutex_lock(&barrier_mutex);
             barrier_count++;
             
-            if (barrier_count == threads.size()) {
+            if (barrier_count == static_cast<int>(threads.size())) {
                 barrier_count = 0;
                 barrier_generation++;
                 pthread_cond_broadcast(&barrier_condition);
@@ -343,7 +343,7 @@ public:
         std::vector<int64_t> local_results(num_threads_, 0);
         
         struct ThreadData {
-            Func* func;
+            Func func;  // Store by value, not pointer
             size_t count;
             int thread_id;
             int num_threads;
@@ -356,17 +356,17 @@ public:
             
             // Dynamic scheduling simulation
             for (size_t i = data->thread_id; i < data->count; i += data->num_threads) {
-                local_result += (*data->func)(i);
+                local_result += data->func(i);
             }
             
             (*data->local_results)[data->thread_id] = local_result;
             return nullptr;
         };
         
-        // Use thread pool instead of creating new threads
+        // Use thread pool with proper data management
         std::vector<ThreadData> thread_data(num_threads_);
         for (int i = 0; i < num_threads_; i++) {
-            thread_data[i] = {&func, count, i, num_threads_, &local_results};
+            thread_data[i] = {func, count, i, num_threads_, &local_results};
             thread_pool_->execute_work(i, worker, &thread_data[i]);
         }
         
@@ -384,7 +384,7 @@ public:
     template<typename Func>
     void parallel_for(size_t count, Func func) {
         struct ThreadData {
-            Func* func;
+            Func func;  // Store by value, not pointer
             size_t count;
             int thread_id;
             int num_threads;
@@ -394,15 +394,15 @@ public:
             ThreadData* data = static_cast<ThreadData*>(arg);
             
             for (size_t i = data->thread_id; i < data->count; i += data->num_threads) {
-                (*data->func)(i);
+                data->func(i);
             }
             return nullptr;
         };
         
-        // Use thread pool instead of creating new threads
+        // Use thread pool with proper data management
         std::vector<ThreadData> thread_data(num_threads_);
         for (int i = 0; i < num_threads_; i++) {
-            thread_data[i] = {&func, count, i, num_threads_};
+            thread_data[i] = {func, count, i, num_threads_};
             thread_pool_->execute_work(i, worker, &thread_data[i]);
         }
         
@@ -413,7 +413,7 @@ public:
     template<typename Func>
     void parallel_for_range(size_t count, Func func) {
         struct ThreadData {
-            Func* func;
+            Func func;  // Store by value, not pointer
             size_t count;
             int thread_id;
             int num_threads;
@@ -427,15 +427,15 @@ public:
             size_t end = ((data->thread_id + 1) * data->count) / data->num_threads;
             
             for (size_t i = start; i < end; i++) {
-                (*data->func)(i);
+                data->func(i);
             }
             return nullptr;
         };
         
-        // Use thread pool instead of creating new threads
+        // Use thread pool with proper data management
         std::vector<ThreadData> thread_data(num_threads_);
         for (int i = 0; i < num_threads_; i++) {
-            thread_data[i] = {&func, count, i, num_threads_};
+            thread_data[i] = {func, count, i, num_threads_};
             thread_pool_->execute_work(i, worker, &thread_data[i]);
         }
         
@@ -448,7 +448,7 @@ public:
         std::vector<int64_t> local_results(num_threads_, 0);
         
         struct ThreadData {
-            Func* func;
+            Func func;  // Store by value, not pointer
             size_t count;
             int thread_id;
             int num_threads;
@@ -464,17 +464,17 @@ public:
             size_t end = ((data->thread_id + 1) * data->count) / data->num_threads;
             
             for (size_t i = start; i < end; i++) {
-                local_result += (*data->func)(i);
+                local_result += data->func(i);
             }
             
             (*data->local_results)[data->thread_id] = local_result;
             return nullptr;
         };
         
-        // Use thread pool instead of creating new threads
+        // Use thread pool with proper data management
         std::vector<ThreadData> thread_data(num_threads_);
         for (int i = 0; i < num_threads_; i++) {
-            thread_data[i] = {&func, count, i, num_threads_, &local_results};
+            thread_data[i] = {func, count, i, num_threads_, &local_results};
             thread_pool_->execute_work(i, worker, &thread_data[i]);
         }
         
@@ -494,7 +494,7 @@ public:
         std::atomic<int64_t> result(0);
         
         struct ThreadData {
-            Func* func;
+            Func func;  // Store by value, not pointer
             int thread_id;
             int num_threads;
             std::atomic<int64_t>* result;
@@ -502,15 +502,15 @@ public:
         
         auto worker = [](void* arg) -> void* {
             ThreadData* data = static_cast<ThreadData*>(arg);
-            int64_t local_result = (*data->func)(data->thread_id, data->num_threads);
+            int64_t local_result = data->func(data->thread_id, data->num_threads);
             data->result->fetch_add(local_result);
             return nullptr;
         };
         
-        // Use thread pool instead of creating new threads
+        // Use thread pool with proper data management
         std::vector<ThreadData> thread_data(num_threads_);
         for (int i = 0; i < num_threads_; i++) {
-            thread_data[i] = {&func, i, num_threads_, &result};
+            thread_data[i] = {func, i, num_threads_, &result};
             thread_pool_->execute_work(i, worker, &thread_data[i]);
         }
         
