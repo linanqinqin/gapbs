@@ -1,12 +1,12 @@
 // Copyright (c) 2015, The Regents of the University of California (Regents)
 // See LICENSE.txt for license details
 
-#include "gapbs_pthreads.h"
+#include "pthreadpp.h"
 
 // Global instance
-GAPBSPthreads gapbs_pthreads;
+PthreadPP p3;
 
 // Initialize with specific number of threads
-void gapbs_set_num_threads(int num_threads) {
-    gapbs_pthreads.set_num_threads(num_threads);
+void p3_set_num_threads(int num_threads) {
+    p3.set_num_threads(num_threads);
 }

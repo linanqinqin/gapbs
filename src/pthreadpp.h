@@ -1,8 +1,8 @@
 // Copyright (c) 2015, The Regents of the University of California (Regents)
 // See LICENSE.txt for license details
 
-#ifndef GAPBS_PTHREADS_H_
-#define GAPBS_PTHREADS_H_
+#ifndef PTHREADPP_H_
+#define PTHREADPP_H_
 
 #include <pthread.h>
 #include <atomic>
@@ -18,17 +18,18 @@
 // Atomic operations are now handled by platform_atomics.h
 
 /*
-GAP Benchmark Suite
-File:   GAPBS Pthreads Wrapper
+PthreadPP - pthread Parallel Programming Framework
+File:   PthreadPP Header
 Author: Custom Implementation
 
 Direct pthreads implementation to replace OpenMP pragmas
 - Provides equivalent functionality to OpenMP parallel constructs
 - Designed for cooperative threading model integration
 - Maintains same performance characteristics as OpenMP
+- General-purpose parallel programming framework
 */
 
-class GAPBSPthreads {
+class PthreadPP {
 private:
     int num_threads_;
     std::vector<pthread_t> threads_;
@@ -80,7 +81,7 @@ private:
     }
     
 public:
-    explicit GAPBSPthreads(int num_threads = 0) 
+    explicit PthreadPP(int num_threads = 0) 
         : num_threads_(num_threads ? num_threads : get_default_thread_count()) {
         threads_.resize(num_threads_);
         mutexes_.resize(num_threads_);
@@ -115,17 +116,10 @@ public:
     
 private:
     static int get_default_thread_count() {
-        // Check environment variable first
-        const char* env_threads = getenv("OMP_NUM_THREADS");
-        if (env_threads) {
-            int threads = std::atoi(env_threads);
-            if (threads > 0) return threads;
-        }
-        
-        // Check GAPBS-specific environment variable
-        const char* gapbs_threads = getenv("GAPBS_NUM_THREADS");
-        if (gapbs_threads) {
-            int threads = std::atoi(gapbs_threads);
+        // Check P3 environment variable
+        const char* p3_threads = getenv("P3_NUM_THREADS");
+        if (p3_threads) {
+            int threads = std::atoi(p3_threads);
             if (threads > 0) return threads;
         }
         
@@ -259,7 +253,7 @@ public:
     }
     
 public:
-    ~GAPBSPthreads() {
+    ~PthreadPP() {
         for (int i = 0; i < num_threads_; i++) {
             pthread_mutex_destroy(&mutexes_[i]);
             pthread_cond_destroy(&conditions_[i]);
@@ -268,25 +262,25 @@ public:
 };
 
 // Global instance for easy access
-extern GAPBSPthreads gapbs_pthreads;
+extern PthreadPP p3;
 
 // Initialize with specific number of threads
-void gapbs_set_num_threads(int num_threads);
+void p3_set_num_threads(int num_threads);
 
-// Macros to replace OpenMP pragmas
-#define GAPBS_PARALLEL_FOR_REDUCTION(count, func, result) \
-    result = gapbs_pthreads.parallel_for_reduction(count, func, 0)
+// P3 Macros to replace OpenMP pragmas
+#define P3_PARALLEL_FOR_REDUCTION(count, func, result) \
+    result = p3.parallel_for_reduction(count, func, 0)
 
-#define GAPBS_PARALLEL_FOR(count, func) \
-    gapbs_pthreads.parallel_for(count, func)
+#define P3_PARALLEL_FOR(count, func) \
+    p3.parallel_for(count, func)
 
-#define GAPBS_PARALLEL_REGION(func, result) \
-    result = gapbs_pthreads.parallel_region(func)
+#define P3_PARALLEL_REGION(func, result) \
+    result = p3.parallel_region(func)
 
-#define GAPBS_BARRIER() \
-    gapbs_pthreads.barrier()
+#define P3_BARRIER() \
+    p3.barrier()
 
-#define GAPBS_CRITICAL(func) \
-    gapbs_pthreads.critical_section(func)
+#define P3_CRITICAL(func) \
+    p3.critical_section(func)
 
-#endif  // GAPBS_PTHREADS_H_
+#endif  // PTHREADPP_H_

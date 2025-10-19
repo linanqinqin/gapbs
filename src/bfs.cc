@@ -13,7 +13,7 @@
 #include "pvector.h"
 #include "sliding_queue.h"
 #include "timer.h"
-#include "gapbs_pthreads.h"
+#include "pthreadpp.h"
 
 // Atomic operations are now handled by platform_atomics.h
 
@@ -52,8 +52,8 @@ int64_t BUStep(const Graph &g, pvector<NodeID> &parent, Bitmap &front,
   next.reset();
   
   // Replace: #pragma omp parallel for reduction(+ : awake_count) schedule(dynamic, 1024)
-  // Use GAPBS_PARALLEL_REGION to ensure proper reduction and avoid race conditions
-  GAPBS_PARALLEL_REGION(
+  // Use P3_PARALLEL_REGION to ensure proper reduction and avoid race conditions
+  P3_PARALLEL_REGION(
     [&](int thread_id, int num_threads) -> int64_t {
       int64_t local_count = 0;
       
@@ -87,7 +87,7 @@ int64_t TDStep(const Graph &g, pvector<NodeID> &parent,
   int64_t scout_count = 0;
   
   // Replace: #pragma omp parallel with thread-local QueueBuffer
-  GAPBS_PARALLEL_REGION(
+  P3_PARALLEL_REGION(
     [&](int thread_id, int num_threads) -> int64_t {
       int64_t local_count = 0;
       QueueBuffer<NodeID> lqueue(queue);
@@ -121,7 +121,7 @@ int64_t TDStep(const Graph &g, pvector<NodeID> &parent,
 
 void QueueToBitmap(const SlidingQueue<NodeID> &queue, Bitmap &bm) {
   // Replace: #pragma omp parallel for
-  GAPBS_PARALLEL_FOR(queue.size(),
+  P3_PARALLEL_FOR(queue.size(),
     [&](size_t i) {
       auto q_iter = queue.begin() + i;
       NodeID u = *q_iter;
@@ -134,7 +134,7 @@ void BitmapToQueue(const Graph &g, const Bitmap &bm,
   // Replace: #pragma omp parallel with thread-local QueueBuffer
   int64_t dummy_result; // Intentionally unused - required by macro
   (void)dummy_result; // Suppress unused variable warning
-  GAPBS_PARALLEL_REGION(
+  P3_PARALLEL_REGION(
     [&](int thread_id, int num_threads) -> int64_t {
       QueueBuffer<NodeID> lqueue(queue);
       
@@ -158,7 +158,7 @@ pvector<NodeID> InitParent(const Graph &g) {
   pvector<NodeID> parent(g.num_nodes());
   
   // Replace: #pragma omp parallel for
-  GAPBS_PARALLEL_FOR(g.num_nodes(),
+  P3_PARALLEL_FOR(g.num_nodes(),
     [&](NodeID n) {
       parent[n] = g.out_degree(n) != 0 ? -g.out_degree(n) : -1;
     });
@@ -220,7 +220,7 @@ pvector<NodeID> DOBFS(const Graph &g, NodeID source, bool logging_enabled = fals
   }
   
   // Replace: #pragma omp parallel for
-  GAPBS_PARALLEL_FOR(g.num_nodes(),
+  P3_PARALLEL_FOR(g.num_nodes(),
     [&](NodeID n) {
       if (parent[n] < -1)
         parent[n] = -1;
@@ -304,21 +304,12 @@ int main(int argc, char* argv[]) {
     return -1;
   
   // Set number of threads if specified via environment variable
-  const char* env_threads = getenv("OMP_NUM_THREADS");
-  if (env_threads) {
-    int threads = std::atoi(env_threads);
+  const char* p3_threads = getenv("P3_NUM_THREADS");
+  if (p3_threads) {
+    int threads = std::atoi(p3_threads);
     if (threads > 0) {
-      gapbs_set_num_threads(threads);
-      std::cout << "Using " << threads << " threads (from OMP_NUM_THREADS)" << std::endl;
-    }
-  }
-  
-  const char* gapbs_threads = getenv("GAPBS_NUM_THREADS");
-  if (gapbs_threads) {
-    int threads = std::atoi(gapbs_threads);
-    if (threads > 0) {
-      gapbs_set_num_threads(threads);
-      std::cout << "Using " << threads << " threads (from GAPBS_NUM_THREADS)" << std::endl;
+      p3_set_num_threads(threads);
+      std::cout << "Using " << threads << " threads (from P3_NUM_THREADS)" << std::endl;
     }
   }
   
