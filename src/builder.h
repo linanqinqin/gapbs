@@ -148,7 +148,7 @@ class BuilderBase {
                  DestID_*** sq_index, DestID_** sq_neighs) {
     pvector<NodeID_> diffs(g.num_nodes());
     // Replace: #pragma omp parallel for private(n_start, n_end)
-    P3_PARALLEL_REGION_PRIVATE(
+    p3.parallel_region_private(
       [&](int thread_id, int num_threads) {
         // Distribute nodes among threads
         NodeID_ start_node = (thread_id * g.num_nodes()) / num_threads;
@@ -173,7 +173,7 @@ class BuilderBase {
     *sq_neighs = new DestID_[sq_offsets[g.num_nodes()]];
     *sq_index = CSRGraph<NodeID_, DestID_>::GenIndex(sq_offsets, *sq_neighs);
     // Replace: #pragma omp parallel for private(n_start)
-    P3_PARALLEL_REGION_PRIVATE(
+    p3.parallel_region_private(
       [&](int thread_id, int num_threads) {
         // Distribute nodes among threads
         NodeID_ start_node = (thread_id * g.num_nodes()) / num_threads;

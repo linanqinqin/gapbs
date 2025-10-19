@@ -110,7 +110,7 @@ class Generator {
   EdgeList MakeUniformEL() {
     EdgeList el(num_edges_);
     // Replace: #pragma omp parallel with nested for
-    P3_PARALLEL_REGION_PRIVATE(
+    p3.parallel_region_private(
       [&](int thread_id, int num_threads) {
         rng_t_ rng;
         UniDist<NodeID_, rng_t_> udist(num_nodes_-1, rng);
@@ -131,7 +131,7 @@ class Generator {
     const uint32_t A = 0.57*max, B = 0.19*max, C = 0.19*max;
     EdgeList el(num_edges_);
     // Replace: #pragma omp parallel with nested for
-    P3_PARALLEL_REGION_PRIVATE(
+    p3.parallel_region_private(
       [&](int thread_id, int num_threads) {
         std::mt19937 rng;
         
@@ -181,7 +181,7 @@ class Generator {
   // Overwrites existing weights with random from [1,255]
   static void InsertWeights(pvector<WEdge> &el) {
     // Replace: #pragma omp parallel with nested for
-    P3_PARALLEL_REGION_PRIVATE(
+    p3.parallel_region_private(
       [&](int thread_id, int num_threads) {
         rng_t_ rng;
         UniDist<WeightT_, rng_t_> udist(254, rng);
