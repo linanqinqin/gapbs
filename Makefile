@@ -42,4 +42,4 @@ include benchmark/bench.mk
 
 .PHONY: clean
 clean:
-	rm -f $(SUITE) test/out/*
+	rm -f $(SUITE) $(PTHREADS_SUITE) test/out/*
