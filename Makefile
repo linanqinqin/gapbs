@@ -17,21 +17,13 @@ ifneq ($(SERIAL), 1)
 endif
 
 KERNELS = bc bfs cc cc_sv pr pr_spmv sssp tc
-PTHREADS_KERNELS = bfs_pthreads
 SUITE = $(KERNELS) converter
-PTHREADS_SUITE = $(PTHREADS_KERNELS)
 
-.PHONY: all pthreads
+.PHONY: all
 all: $(SUITE)
-
-pthreads: $(PTHREADS_SUITE)
 
 % : src/%.cc src/*.h
 	$(CXX) $(CXX_FLAGS) $< -o $@
-
-# Pthreads version needs additional source files
-bfs_pthreads : src/bfs_pthreads.cc src/gapbs_pthreads.cc src/*.h
-	$(CXX) $(CXX_FLAGS) -lpthread src/bfs_pthreads.cc src/gapbs_pthreads.cc -o $@
 
 # Testing
 include test/test.mk
@@ -42,4 +34,4 @@ include benchmark/bench.mk
 
 .PHONY: clean
 clean:
-	rm -f $(SUITE) $(PTHREADS_SUITE) test/out/*
+	rm -f $(SUITE) test/out/*
