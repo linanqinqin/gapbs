@@ -364,13 +364,10 @@ public:
         };
         
         // Use thread pool with proper data management
-        std::vector<ThreadData> thread_data(num_threads_);
+        std::vector<ThreadData> thread_data;
+        thread_data.reserve(num_threads_);
         for (int i = 0; i < num_threads_; i++) {
-            thread_data[i].func = func;
-            thread_data[i].count = count;
-            thread_data[i].thread_id = i;
-            thread_data[i].num_threads = num_threads_;
-            thread_data[i].local_results = &local_results;
+            thread_data.emplace_back(ThreadData{func, count, i, num_threads_, &local_results});
             thread_pool_->execute_work(i, worker, &thread_data[i]);
         }
         
@@ -404,12 +401,10 @@ public:
         };
         
         // Use thread pool with proper data management
-        std::vector<ThreadData> thread_data(num_threads_);
+        std::vector<ThreadData> thread_data;
+        thread_data.reserve(num_threads_);
         for (int i = 0; i < num_threads_; i++) {
-            thread_data[i].func = func;
-            thread_data[i].count = count;
-            thread_data[i].thread_id = i;
-            thread_data[i].num_threads = num_threads_;
+            thread_data.emplace_back(ThreadData{func, count, i, num_threads_});
             thread_pool_->execute_work(i, worker, &thread_data[i]);
         }
         
@@ -440,12 +435,10 @@ public:
         };
         
         // Use thread pool with proper data management
-        std::vector<ThreadData> thread_data(num_threads_);
+        std::vector<ThreadData> thread_data;
+        thread_data.reserve(num_threads_);
         for (int i = 0; i < num_threads_; i++) {
-            thread_data[i].func = func;
-            thread_data[i].count = count;
-            thread_data[i].thread_id = i;
-            thread_data[i].num_threads = num_threads_;
+            thread_data.emplace_back(ThreadData{func, count, i, num_threads_});
             thread_pool_->execute_work(i, worker, &thread_data[i]);
         }
         
@@ -482,13 +475,10 @@ public:
         };
         
         // Use thread pool with proper data management
-        std::vector<ThreadData> thread_data(num_threads_);
+        std::vector<ThreadData> thread_data;
+        thread_data.reserve(num_threads_);
         for (int i = 0; i < num_threads_; i++) {
-            thread_data[i].func = func;
-            thread_data[i].count = count;
-            thread_data[i].thread_id = i;
-            thread_data[i].num_threads = num_threads_;
-            thread_data[i].local_results = &local_results;
+            thread_data.emplace_back(ThreadData{func, count, i, num_threads_, &local_results});
             thread_pool_->execute_work(i, worker, &thread_data[i]);
         }
         
@@ -522,12 +512,10 @@ public:
         };
         
         // Use thread pool with proper data management
-        std::vector<ThreadData> thread_data(num_threads_);
+        std::vector<ThreadData> thread_data;
+        thread_data.reserve(num_threads_);
         for (int i = 0; i < num_threads_; i++) {
-            thread_data[i].func = func;
-            thread_data[i].thread_id = i;
-            thread_data[i].num_threads = num_threads_;
-            thread_data[i].result = &result;
+            thread_data.emplace_back(ThreadData{func, i, num_threads_, &result});
             thread_pool_->execute_work(i, worker, &thread_data[i]);
         }
         
