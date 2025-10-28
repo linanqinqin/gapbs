@@ -10,6 +10,7 @@
 #include "command_line.h"
 #include "graph.h"
 #include "pvector.h"
+#include "pthreadpp.h"
 
 /*
 GAP Benchmark Suite
@@ -37,21 +38,33 @@ pvector<ScoreT> PageRankPullGS(const Graph &g, int max_iters, double epsilon=0,
   const ScoreT base_score = (1.0f - kDamp) / g.num_nodes();
   pvector<ScoreT> scores(g.num_nodes(), init_score);
   pvector<ScoreT> outgoing_contrib(g.num_nodes());
-  #pragma omp parallel for
-  for (NodeID n=0; n < g.num_nodes(); n++)
-    outgoing_contrib[n] = init_score / g.out_degree(n);
+  P3_PARALLEL_FOR(g.num_nodes(),
+    [&](NodeID n) {
+      outgoing_contrib[n] = init_score / g.out_degree(n);
+    });
   for (int iter=0; iter < max_iters; iter++) {
     double error = 0;
-    #pragma omp parallel for reduction(+ : error) schedule(dynamic, 16384)
-    for (NodeID u=0; u < g.num_nodes(); u++) {
-      ScoreT incoming_total = 0;
-      for (NodeID v : g.in_neigh(u))
-        incoming_total += outgoing_contrib[v];
-      ScoreT old_score = scores[u];
-      scores[u] = base_score + kDamp * incoming_total;
-      error += fabs(scores[u] - old_score);
-      outgoing_contrib[u] = scores[u] / g.out_degree(u);
-    }
+    P3_PARALLEL_REGION(
+      [&](int thread_id, int num_threads) -> int64_t {
+        double local_error = 0;
+        
+        // Distribute work among threads using static block distribution
+        // This matches OpenMP's behavior for correctness
+        NodeID start = (thread_id * g.num_nodes()) / num_threads;
+        NodeID end = ((thread_id + 1) * g.num_nodes()) / num_threads;
+        
+        for (NodeID u = start; u < end; u++) {
+          ScoreT incoming_total = 0;
+          for (NodeID v : g.in_neigh(u))
+            incoming_total += outgoing_contrib[v];
+          ScoreT old_score = scores[u];
+          scores[u] = base_score + kDamp * incoming_total;
+          local_error += fabs(scores[u] - old_score);
+          outgoing_contrib[u] = scores[u] / g.out_degree(u);
+        }
+        return static_cast<int64_t>(local_error * 1000000); // Scale to avoid precision loss
+      }, error);
+    error = static_cast<double>(error) / 1000000; // Scale back
     if (logging_enabled)
       PrintStep(iter, error);
     if (error < epsilon)
@@ -98,8 +111,25 @@ int main(int argc, char* argv[]) {
   CLPageRank cli(argc, argv, "pagerank", 1e-4, 20);
   if (!cli.ParseArgs())
     return -1;
+  
+  // Set number of threads if specified via environment variable
+  const char* p3_threads = getenv("P3_NUM_THREADS");
+  if (p3_threads) {
+    int threads = std::atoi(p3_threads);
+    if (threads > 0) {
+      p3_set_num_threads(threads);
+      std::cout << "Using " << threads << " threads (from P3_NUM_THREADS)" << std::endl;
+    }
+  }
+  
   Builder b(cli);
   Graph g = b.MakeGraph();
+  
+  // Barrier: wait for user input before starting PageRank processing
+  std::cout << "Graph construction complete. Press Enter to start PageRank processing..." << std::endl;
+  std::string input;
+  std::getline(std::cin, input);
+  
   auto PRBound = [&cli] (const Graph &g) {
     return PageRankPullGS(g, cli.max_iters(), cli.tolerance(), cli.logging_en());
   };
