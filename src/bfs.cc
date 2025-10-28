@@ -315,6 +315,12 @@ int main(int argc, char* argv[]) {
   
   Builder b(cli);
   Graph g = b.MakeGraph();
+  
+  // Barrier: wait for user input before starting BFS processing
+  std::cout << "Graph construction complete. Press Enter to start BFS processing..." << std::endl;
+  std::string input;
+  std::getline(std::cin, input);
+  
   SourcePicker<Graph> sp(g, cli.start_vertex());
   auto BFSBound = [&sp,&cli] (const Graph &g) {
     return DOBFS(g, sp.PickNext(), cli.logging_en());
