@@ -157,6 +157,10 @@ public:
             int thread_id;
             int num_threads;
             std::vector<int64_t>* local_results;
+            
+            ThreadData() = default;
+            ThreadData(Func* f, size_t c, int tid, int nt, std::vector<int64_t>* lr)
+                : func(f), count(c), thread_id(tid), num_threads(nt), local_results(lr) {}
         };
         
         auto worker = [](void* arg) -> void* {
@@ -174,7 +178,7 @@ public:
         
         std::vector<ThreadData> thread_data(num_threads_);
         for (int i = 0; i < num_threads_; i++) {
-            thread_data[i] = {&func, count, i, num_threads_, &local_results};
+            thread_data[i] = ThreadData(&func, count, i, num_threads_, &local_results);
             pthread_create(&threads_[i], nullptr, worker, &thread_data[i]);
         }
         
@@ -201,6 +205,10 @@ public:
             int thread_id;
             int num_threads;
             std::vector<T>* local_results;
+            
+            ThreadData() = default;
+            ThreadData(Func* f, size_t c, int tid, int nt, std::vector<T>* lr)
+                : func(f), count(c), thread_id(tid), num_threads(nt), local_results(lr) {}
         };
         
         auto worker = [](void* arg) -> void* {
@@ -220,7 +228,7 @@ public:
         
         std::vector<ThreadData> thread_data(num_threads_);
         for (int i = 0; i < num_threads_; i++) {
-            thread_data[i] = {&func, count, i, num_threads_, &local_results};
+            thread_data[i] = ThreadData(&func, count, i, num_threads_, &local_results);
             pthread_create(&threads_[i], nullptr, worker, &thread_data[i]);
         }
         
@@ -246,6 +254,10 @@ public:
             size_t count;
             int thread_id;
             int num_threads;
+            
+            ThreadData() = default;
+            ThreadData(Func* f, size_t c, int tid, int nt)
+                : func(f), count(c), thread_id(tid), num_threads(nt) {}
         };
         
         auto worker = [](void* arg) -> void* {
@@ -259,7 +271,7 @@ public:
         
         std::vector<ThreadData> thread_data(num_threads_);
         for (int i = 0; i < num_threads_; i++) {
-            thread_data[i] = {&func, count, i, num_threads_};
+            thread_data[i] = ThreadData(&func, count, i, num_threads_);
             pthread_create(&threads_[i], nullptr, worker, &thread_data[i]);
         }
         
@@ -278,6 +290,10 @@ public:
             int thread_id;
             int num_threads;
             std::atomic<int64_t>* result;
+            
+            ThreadData() = default;
+            ThreadData(Func* f, int tid, int nt, std::atomic<int64_t>* r)
+                : func(f), thread_id(tid), num_threads(nt), result(r) {}
         };
         
         auto worker = [](void* arg) -> void* {
@@ -289,7 +305,7 @@ public:
         
         std::vector<ThreadData> thread_data(num_threads_);
         for (int i = 0; i < num_threads_; i++) {
-            thread_data[i] = {&func, i, num_threads_, &result};
+            thread_data[i] = ThreadData(&func, i, num_threads_, &result);
             pthread_create(&threads_[i], nullptr, worker, &thread_data[i]);
         }
         
@@ -307,6 +323,10 @@ public:
             Func* func;
             int thread_id;
             int num_threads;
+            
+            ThreadData() = default;
+            ThreadData(Func* f, int tid, int nt)
+                : func(f), thread_id(tid), num_threads(nt) {}
         };
         
         auto worker = [](void* arg) -> void* {
@@ -317,7 +337,7 @@ public:
         
         std::vector<ThreadData> thread_data(num_threads_);
         for (int i = 0; i < num_threads_; i++) {
-            thread_data[i] = {&func, i, num_threads_};
+            thread_data[i] = ThreadData(&func, i, num_threads_);
             pthread_create(&threads_[i], nullptr, worker, &thread_data[i]);
         }
         
@@ -335,14 +355,18 @@ public:
             size_t chunk_size;
             int thread_id;
             int num_threads;
-            std::atomic<size_t> next_chunk;
+            std::atomic<size_t>* next_chunk;
+            
+            ThreadData() = default;
+            ThreadData(Func* f, size_t c, size_t cs, int tid, int nt, std::atomic<size_t>* nc)
+                : func(f), count(c), chunk_size(cs), thread_id(tid), num_threads(nt), next_chunk(nc) {}
         };
         
         auto worker = [](void* arg) -> void* {
             ThreadData* data = static_cast<ThreadData*>(arg);
             
             while (true) {
-                size_t chunk_start = data->next_chunk.fetch_add(data->chunk_size);
+                size_t chunk_start = data->next_chunk->fetch_add(data->chunk_size);
                 if (chunk_start >= data->count) break;
                 
                 size_t chunk_end = std::min(chunk_start + data->chunk_size, data->count);
@@ -356,7 +380,7 @@ public:
         std::atomic<size_t> next_chunk(0);
         std::vector<ThreadData> thread_data(num_threads_);
         for (int i = 0; i < num_threads_; i++) {
-            thread_data[i] = {&func, count, chunk_size, i, num_threads_, &next_chunk};
+            thread_data[i] = ThreadData(&func, count, chunk_size, i, num_threads_, &next_chunk);
             pthread_create(&threads_[i], nullptr, worker, &thread_data[i]);
         }
         

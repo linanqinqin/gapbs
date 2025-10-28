@@ -13,6 +13,7 @@
 #include "command_line.h"
 #include "graph.h"
 #include "pvector.h"
+#include "pthreadpp.h"
 
 
 /*
@@ -57,12 +58,13 @@ void Link(NodeID u, NodeID v, pvector<NodeID>& comp) {
 
 // Reduce depth of tree for each component to 1 by crawling up parents
 void Compress(const Graph &g, pvector<NodeID>& comp) {
-  #pragma omp parallel for schedule(dynamic, 16384)
-  for (NodeID n = 0; n < g.num_nodes(); n++) {
-    while (comp[n] != comp[comp[n]]) {
-      comp[n] = comp[comp[n]];
-    }
-  }
+  // Replace: #pragma omp parallel for schedule(dynamic, 16384)
+  P3_PARALLEL_FOR_DYNAMIC(g.num_nodes(),
+    [&](NodeID n) {
+      while (comp[n] != comp[comp[n]]) {
+        comp[n] = comp[comp[n]];
+      }
+    }, 16384);
 }
 
 
@@ -97,21 +99,24 @@ pvector<NodeID> Afforest(const Graph &g, bool logging_enabled = false,
   pvector<NodeID> comp(g.num_nodes());
 
   // Initialize each node to a single-node self-pointing tree
-  #pragma omp parallel for
-  for (NodeID n = 0; n < g.num_nodes(); n++)
-    comp[n] = n;
+  // Replace: #pragma omp parallel for
+  P3_PARALLEL_FOR(g.num_nodes(),
+    [&](NodeID n) {
+      comp[n] = n;
+    });
 
   // Process a sparse sampled subgraph first for approximating components.
   // Sample by processing a fixed number of neighbors for each node (see paper)
   for (int r = 0; r < neighbor_rounds; ++r) {
-  #pragma omp parallel for schedule(dynamic,16384)
-    for (NodeID u = 0; u < g.num_nodes(); u++) {
-      for (NodeID v : g.out_neigh(u, r)) {
-        // Link at most one time if neighbor available at offset r
-        Link(u, v, comp);
-        break;
-      }
-    }
+    // Replace: #pragma omp parallel for schedule(dynamic,16384)
+    P3_PARALLEL_FOR_DYNAMIC(g.num_nodes(),
+      [&](NodeID u) {
+        for (NodeID v : g.out_neigh(u, r)) {
+          // Link at most one time if neighbor available at offset r
+          Link(u, v, comp);
+          break;
+        }
+      }, 16384);
     Compress(g, comp);
   }
 
@@ -121,29 +126,31 @@ pvector<NodeID> Afforest(const Graph &g, bool logging_enabled = false,
 
   // Final 'link' phase over remaining edges (excluding the largest component)
   if (!g.directed()) {
-    #pragma omp parallel for schedule(dynamic, 16384)
-    for (NodeID u = 0; u < g.num_nodes(); u++) {
-      // Skip processing nodes in the largest component
-      if (comp[u] == c)
-        continue;
-      // Skip over part of neighborhood (determined by neighbor_rounds)
-      for (NodeID v : g.out_neigh(u, neighbor_rounds)) {
-        Link(u, v, comp);
-      }
-    }
+    // Replace: #pragma omp parallel for schedule(dynamic, 16384)
+    P3_PARALLEL_FOR_DYNAMIC(g.num_nodes(),
+      [&](NodeID u) {
+        // Skip processing nodes in the largest component
+        if (comp[u] == c)
+          return;
+        // Skip over part of neighborhood (determined by neighbor_rounds)
+        for (NodeID v : g.out_neigh(u, neighbor_rounds)) {
+          Link(u, v, comp);
+        }
+      }, 16384);
   } else {
-    #pragma omp parallel for schedule(dynamic, 16384)
-    for (NodeID u = 0; u < g.num_nodes(); u++) {
-      if (comp[u] == c)
-        continue;
-      for (NodeID v : g.out_neigh(u, neighbor_rounds)) {
-        Link(u, v, comp);
-      }
-      // To support directed graphs, process reverse graph completely
-      for (NodeID v : g.in_neigh(u)) {
-        Link(u, v, comp);
-      }
-    }
+    // Replace: #pragma omp parallel for schedule(dynamic, 16384)
+    P3_PARALLEL_FOR_DYNAMIC(g.num_nodes(),
+      [&](NodeID u) {
+        if (comp[u] == c)
+          return;
+        for (NodeID v : g.out_neigh(u, neighbor_rounds)) {
+          Link(u, v, comp);
+        }
+        // To support directed graphs, process reverse graph completely
+        for (NodeID v : g.in_neigh(u)) {
+          Link(u, v, comp);
+        }
+      }, 16384);
   }
   // Finally, 'compress' for final convergence
   Compress(g, comp);
@@ -221,8 +228,25 @@ int main(int argc, char* argv[]) {
   CLApp cli(argc, argv, "connected-components-afforest");
   if (!cli.ParseArgs())
     return -1;
+  
+  // Set number of threads if specified via environment variable
+  const char* p3_threads = getenv("P3_NUM_THREADS");
+  if (p3_threads) {
+    int threads = std::atoi(p3_threads);
+    if (threads > 0) {
+      p3_set_num_threads(threads);
+      std::cout << "Using " << threads << " threads (from P3_NUM_THREADS)" << std::endl;
+    }
+  }
+  
   Builder b(cli);
   Graph g = b.MakeGraph();
+  
+  // Barrier: wait for user input before starting CC processing
+  std::cout << "Graph construction complete. Press Enter to start Connected Components processing..." << std::endl;
+  std::string input;
+  std::getline(std::cin, input);
+  
   auto CCBound = [&cli](const Graph& gr){ return Afforest(gr, cli.logging_en()); };
   BenchmarkKernel(cli, g, CCBound, PrintCompStats, CCVerifier);
   return 0;
