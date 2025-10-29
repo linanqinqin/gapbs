@@ -13,6 +13,7 @@
 #include "command_line.h"
 #include "graph.h"
 #include "pvector.h"
+#include "pthreadpp.h"
 
 
 /*
@@ -48,35 +49,39 @@ using namespace std;
 // independent of the edge's direction.
 pvector<NodeID> ShiloachVishkin(const Graph &g) {
   pvector<NodeID> comp(g.num_nodes());
-  #pragma omp parallel for
-  for (NodeID n=0; n < g.num_nodes(); n++)
-    comp[n] = n;
+  // Replace: #pragma omp parallel for
+  P3_PARALLEL_FOR(g.num_nodes(),
+    [&](NodeID n) {
+      comp[n] = n;
+    });
   bool change = true;
   int num_iter = 0;
   while (change) {
     change = false;
     num_iter++;
-    #pragma omp parallel for
-    for (NodeID u=0; u < g.num_nodes(); u++) {
-      for (NodeID v : g.out_neigh(u)) {
-        NodeID comp_u = comp[u];
-        NodeID comp_v = comp[v];
-        if (comp_u == comp_v) continue;
-        // Hooking condition so lower component ID wins independent of direction
-        NodeID high_comp = comp_u > comp_v ? comp_u : comp_v;
-        NodeID low_comp = comp_u + (comp_v - high_comp);
-        if (high_comp == comp[high_comp]) {
-          change = true;
-          comp[high_comp] = low_comp;
+    // Replace: #pragma omp parallel for
+    P3_PARALLEL_FOR(g.num_nodes(),
+      [&](NodeID u) {
+        for (NodeID v : g.out_neigh(u)) {
+          NodeID comp_u = comp[u];
+          NodeID comp_v = comp[v];
+          if (comp_u == comp_v) continue;
+          // Hooking condition so lower component ID wins independent of direction
+          NodeID high_comp = comp_u > comp_v ? comp_u : comp_v;
+          NodeID low_comp = comp_u + (comp_v - high_comp);
+          if (high_comp == comp[high_comp]) {
+            change = true;
+            comp[high_comp] = low_comp;
+          }
         }
-      }
-    }
-    #pragma omp parallel for
-    for (NodeID n=0; n < g.num_nodes(); n++) {
-      while (comp[n] != comp[comp[n]]) {
-        comp[n] = comp[comp[n]];
-      }
-    }
+      });
+    // Replace: #pragma omp parallel for
+    P3_PARALLEL_FOR(g.num_nodes(),
+      [&](NodeID n) {
+        while (comp[n] != comp[comp[n]]) {
+          comp[n] = comp[comp[n]];
+        }
+      });
   }
   cout << "Shiloach-Vishkin took " << num_iter << " iterations" << endl;
   return comp;
@@ -153,8 +158,25 @@ int main(int argc, char* argv[]) {
   CLApp cli(argc, argv, "connected-components");
   if (!cli.ParseArgs())
     return -1;
+  
+  // Set number of threads if specified via environment variable
+  const char* p3_threads = getenv("P3_NUM_THREADS");
+  if (p3_threads) {
+    int threads = std::atoi(p3_threads);
+    if (threads > 0) {
+      p3_set_num_threads(threads);
+      std::cout << "Using " << threads << " threads (from P3_NUM_THREADS)" << std::endl;
+    }
+  }
+  
   Builder b(cli);
   Graph g = b.MakeGraph();
+  
+  // Barrier: wait for user input before starting CC processing
+  std::cout << "Graph construction complete. Press Enter to start Connected Components processing..." << std::endl;
+  std::string input;
+  std::getline(std::cin, input);
+  
   BenchmarkKernel(cli, g, ShiloachVishkin, PrintCompStats, CCVerifier);
   return 0;
 }
