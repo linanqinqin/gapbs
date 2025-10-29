@@ -14,6 +14,7 @@
 #include <utility>
 #include <cstdlib>
 #include <cstring>
+#include <chrono>
 
 // Atomic operations are now handled by platform_atomics.h
 
@@ -144,6 +145,54 @@ public:
         pthread_mutex_lock(&critical_mutex);
         func();
         pthread_mutex_unlock(&critical_mutex);
+    }
+    
+    // Atomic operations support
+    template<typename T>
+    void atomic_add(T& variable, T value) {
+        static pthread_mutex_t atomic_mutex = PTHREAD_MUTEX_INITIALIZER;
+        pthread_mutex_lock(&atomic_mutex);
+        variable += value;
+        pthread_mutex_unlock(&atomic_mutex);
+    }
+    
+    template<typename T>
+    void atomic_max(T& variable, T value) {
+        static pthread_mutex_t atomic_mutex = PTHREAD_MUTEX_INITIALIZER;
+        pthread_mutex_lock(&atomic_mutex);
+        if (value > variable) {
+            variable = value;
+        }
+        pthread_mutex_unlock(&atomic_mutex);
+    }
+    
+    // Single directive support - only one thread executes the function
+    void single(std::function<void()> func) {
+        static pthread_mutex_t single_mutex = PTHREAD_MUTEX_INITIALIZER;
+        static std::atomic<int> thread_count{0};
+        static std::atomic<bool> executed{false};
+        
+        // Reset for each parallel region
+        int count = thread_count.fetch_add(1);
+        if (count == 0) {
+            executed.store(false);
+        }
+        
+        bool expected = false;
+        if (executed.compare_exchange_strong(expected, true)) {
+            pthread_mutex_lock(&single_mutex);
+            func();
+            pthread_mutex_unlock(&single_mutex);
+        }
+        
+        // Wait for all threads to reach this point
+        while (thread_count.load() < num_threads_) {
+            std::this_thread::sleep_for(std::chrono::microseconds(1));
+        }
+        
+        if (count == num_threads_ - 1) {
+            thread_count.store(0);
+        }
     }
     // Parallel for with reduction
     template<typename Func>
@@ -433,5 +482,14 @@ inline void p3_set_num_threads(int num_threads) {
 
 #define P3_CRITICAL(func) \
     get_p3_instance().critical_section(func)
+
+#define P3_ATOMIC_ADD(variable, value) \
+    get_p3_instance().atomic_add(variable, value)
+
+#define P3_ATOMIC_MAX(variable, value) \
+    get_p3_instance().atomic_max(variable, value)
+
+#define P3_SINGLE(func) \
+    get_p3_instance().single(func)
 
 #endif  // PTHREADPP_H_

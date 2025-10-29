@@ -15,6 +15,7 @@
 #include "sliding_queue.h"
 #include "timer.h"
 #include "util.h"
+#include "pthreadpp.h"
 
 
 /*
@@ -58,36 +59,74 @@ void PBFS(const Graph &g, NodeID source, pvector<CountT> &path_counts,
   depth_index.push_back(queue.begin());
   queue.slide_window();
   const NodeID* g_out_start = g.out_neigh(0).begin();
-  #pragma omp parallel
-  {
+  
+  // Use a custom parallel region that properly handles the BFS algorithm
+  // This is more complex than a simple parallel for, so we need to implement it carefully
+  struct BFSData {
+    const Graph* g;
+    pvector<NodeID>* depths;
+    pvector<CountT>* path_counts;
+    Bitmap* succ;
+    vector<SlidingQueue<NodeID>::iterator>* depth_index;
+    SlidingQueue<NodeID>* queue;
+    const NodeID* g_out_start;
+  };
+  
+  BFSData data = {&g, &depths, &path_counts, &succ, &depth_index, &queue, g_out_start};
+  
+  // Use parallel region with proper synchronization
+  int64_t result = 0;
+  P3_PARALLEL_REGION([&](int thread_id, int num_threads) -> int64_t {
     NodeID depth = 0;
     QueueBuffer<NodeID> lqueue(queue);
+    
     while (!queue.empty()) {
       depth++;
-      #pragma omp for schedule(dynamic, 64) nowait
-      for (auto q_iter = queue.begin(); q_iter < queue.end(); q_iter++) {
-        NodeID u = *q_iter;
-        for (NodeID &v : g.out_neigh(u)) {
-          if ((depths[v] == -1) &&
-              (compare_and_swap(depths[v], static_cast<NodeID>(-1), depth))) {
-            lqueue.push_back(v);
-          }
-          if (depths[v] == depth) {
-            succ.set_bit_atomic(&v - g_out_start);
-            #pragma omp atomic
-            path_counts[v] += path_counts[u];
+      
+      // Process current level with dynamic scheduling
+      size_t queue_size = queue.end() - queue.begin();
+      size_t chunk_size = 64;
+      size_t chunk_start = thread_id * chunk_size;
+      
+      while (chunk_start < queue_size) {
+        size_t chunk_end = std::min(chunk_start + chunk_size, queue_size);
+        
+        for (size_t i = chunk_start; i < chunk_end; i++) {
+          auto q_iter = queue.begin() + i;
+          NodeID u = *q_iter;
+          for (NodeID &v : g.out_neigh(u)) {
+            if ((depths[v] == -1) &&
+                (compare_and_swap(depths[v], static_cast<NodeID>(-1), depth))) {
+              lqueue.push_back(v);
+            }
+            if (depths[v] == depth) {
+              succ.set_bit_atomic(&v - g_out_start);
+              P3_ATOMIC_ADD(path_counts[v], path_counts[u]);
+            }
           }
         }
+        
+        // Get next chunk (dynamic scheduling)
+        chunk_start += num_threads * chunk_size;
       }
+      
       lqueue.flush();
-      #pragma omp barrier
-      #pragma omp single
-      {
+      
+      // Synchronize all threads before updating queue
+      P3_BARRIER();
+      
+      // Only one thread updates the queue
+      if (thread_id == 0) {
         depth_index.push_back(queue.begin());
         queue.slide_window();
       }
+      
+      P3_BARRIER();
     }
-  }
+    
+    return 0; // Return value not used
+  }, result);
+  
   depth_index.push_back(queue.begin());
 }
 
@@ -121,8 +160,9 @@ pvector<ScoreT> Brandes(const Graph &g, SourcePicker<Graph> &sp,
     pvector<ScoreT> deltas(g.num_nodes(), 0);
     t.Start();
     for (int d=depth_index.size()-2; d >= 0; d--) {
-      #pragma omp parallel for schedule(dynamic, 64)
-      for (auto it = depth_index[d]; it < depth_index[d+1]; it++) {
+      // Convert OpenMP parallel for schedule(dynamic, 64) to P3 dynamic scheduling
+      P3_PARALLEL_FOR_DYNAMIC(depth_index[d+1] - depth_index[d], [&](size_t i) {
+        auto it = depth_index[d] + i;
         NodeID u = *it;
         ScoreT delta_u = 0;
         for (NodeID &v : g.out_neigh(u)) {
@@ -132,7 +172,7 @@ pvector<ScoreT> Brandes(const Graph &g, SourcePicker<Graph> &sp,
         }
         deltas[u] = delta_u;
         scores[u] += delta_u;
-      }
+      }, 64);
     }
     t.Stop();
     if (logging_enabled)
@@ -140,12 +180,15 @@ pvector<ScoreT> Brandes(const Graph &g, SourcePicker<Graph> &sp,
   }
   // normalize scores
   ScoreT biggest_score = 0;
-  #pragma omp parallel for reduction(max : biggest_score)
-  for (NodeID n=0; n < g.num_nodes(); n++)
-    biggest_score = max(biggest_score, scores[n]);
-  #pragma omp parallel for
-  for (NodeID n=0; n < g.num_nodes(); n++)
+  // Convert OpenMP parallel for reduction(max : biggest_score) to P3 max reduction
+  P3_PARALLEL_FOR_MAX_REDUCTION(g.num_nodes(), [&](size_t n) {
+    return scores[n];
+  }, biggest_score, biggest_score);
+  
+  // Convert OpenMP parallel for to P3 parallel for
+  P3_PARALLEL_FOR(g.num_nodes(), [&](size_t n) {
     scores[n] = scores[n] / biggest_score;
+  });
   return scores;
 }
 
@@ -236,6 +279,17 @@ int main(int argc, char* argv[]) {
     return -1;
   if (cli.num_iters() > 1 && cli.start_vertex() != -1)
     cout << "Warning: iterating from same source (-r & -i)" << endl;
+  
+  // Set number of threads if specified via environment variable
+  const char* p3_threads = getenv("P3_NUM_THREADS");
+  if (p3_threads) {
+    int threads = std::atoi(p3_threads);
+    if (threads > 0) {
+      p3_set_num_threads(threads);
+      std::cout << "Using " << threads << " threads (from P3_NUM_THREADS)" << std::endl;
+    }
+  }
+  
   Builder b(cli);
   Graph g = b.MakeGraph();
   SourcePicker<Graph> sp(g, cli.start_vertex());
