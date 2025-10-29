@@ -404,9 +404,6 @@ inline PthreadPP& get_p3_instance() {
     return instance;
 }
 
-// Global reference for easy access
-#define p3 get_p3_instance()
-
 // Initialize with specific number of threads
 inline void p3_set_num_threads(int num_threads) {
     get_p3_instance().set_num_threads(num_threads);
@@ -414,27 +411,27 @@ inline void p3_set_num_threads(int num_threads) {
 
 // P3 Macros to replace OpenMP pragmas
 #define P3_PARALLEL_FOR_REDUCTION(count, func, result) \
-    result = p3.parallel_for_reduction(count, func, 0)
+    result = get_p3_instance().parallel_for_reduction(count, func, 0)
 
 #define P3_PARALLEL_FOR_MAX_REDUCTION(count, func, result, initial_value) \
-    result = p3.parallel_for_max_reduction(count, func, initial_value)
+    result = get_p3_instance().parallel_for_max_reduction(count, func, initial_value)
 
 #define P3_PARALLEL_FOR(count, func) \
-    p3.parallel_for(count, func)
+    get_p3_instance().parallel_for(count, func)
 
 #define P3_PARALLEL_FOR_DYNAMIC(count, func, chunk_size) \
-    p3.parallel_for_dynamic(count, func, chunk_size)
+    get_p3_instance().parallel_for_dynamic(count, func, chunk_size)
 
 #define P3_PARALLEL_REGION(func, result) \
-    result = p3.parallel_region(func)
+    result = get_p3_instance().parallel_region(func)
 
 #define P3_PARALLEL_REGION_PRIVATE(func) \
-    p3.parallel_region_private(func)
+    get_p3_instance().parallel_region_private(func)
 
 #define P3_BARRIER() \
-    p3.barrier()
+    get_p3_instance().barrier()
 
 #define P3_CRITICAL(func) \
-    p3.critical_section(func)
+    get_p3_instance().critical_section(func)
 
 #endif  // PTHREADPP_H_
