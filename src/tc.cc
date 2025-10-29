@@ -16,6 +16,7 @@
 #include "command_line.h"
 #include "graph.h"
 #include "pvector.h"
+#include "pthreadpp.h"
 
 
 /*
@@ -51,22 +52,36 @@ using namespace std;
 
 size_t OrderedCount(const Graph &g) {
   size_t total = 0;
-  #pragma omp parallel for reduction(+ : total) schedule(dynamic, 64)
-  for (NodeID u=0; u < g.num_nodes(); u++) {
-    for (NodeID v : g.out_neigh(u)) {
-      if (v > u)
-        break;
-      auto it = g.out_neigh(v).begin();
-      for (NodeID w : g.out_neigh(u)) {
-        if (w > v)
-          break;
-        while (*it < w)
-          it++;
-        if (w == *it)
-          total++;
+  
+  // Replace: #pragma omp parallel for reduction(+ : total) schedule(dynamic, 64)
+  // Use P3_PARALLEL_REGION to ensure proper reduction and avoid race conditions
+  P3_PARALLEL_REGION(
+    [&](int thread_id, int num_threads) -> int64_t {
+      size_t local_total = 0;
+      
+      // Distribute work among threads using static block distribution
+      // This matches OpenMP's behavior for correctness
+      NodeID start = (thread_id * g.num_nodes()) / num_threads;
+      NodeID end = ((thread_id + 1) * g.num_nodes()) / num_threads;
+      
+      for (NodeID u = start; u < end; u++) {
+        for (NodeID v : g.out_neigh(u)) {
+          if (v > u)
+            break;
+          auto it = g.out_neigh(v).begin();
+          for (NodeID w : g.out_neigh(u)) {
+            if (w > v)
+              break;
+            while (*it < w)
+              it++;
+            if (w == *it)
+              local_total++;
+          }
+        }
       }
-    }
-  }
+      return static_cast<int64_t>(local_total);
+    }, total);
+  
   return total;
 }
 
@@ -132,6 +147,17 @@ int main(int argc, char* argv[]) {
   CLApp cli(argc, argv, "triangle count");
   if (!cli.ParseArgs())
     return -1;
+  
+  // Set number of threads if specified via environment variable
+  const char* p3_threads = getenv("P3_NUM_THREADS");
+  if (p3_threads) {
+    int threads = std::atoi(p3_threads);
+    if (threads > 0) {
+      p3_set_num_threads(threads);
+      std::cout << "Using " << threads << " threads (from P3_NUM_THREADS)" << std::endl;
+    }
+  }
+  
   Builder b(cli);
   Graph g = b.MakeGraph();
   if (g.directed()) {
