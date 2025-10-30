@@ -14,6 +14,7 @@
 #include "platform_atomics.h"
 #include "pvector.h"
 #include "timer.h"
+#include "pthreadpp.h"
 
 
 /*
@@ -87,6 +88,7 @@ void RelaxEdges(const WGraph &g, NodeID u, WeightT delta,
 pvector<WeightT> DeltaStep(const WGraph &g, NodeID source, WeightT delta,
                            bool logging_enabled = false) {
   Timer t;
+  const bool debug_sssp = ([](){ const char* v = getenv("P3_DEBUG_SSSP"); return v && std::atoi(v) > 0; })();
   pvector<WeightT> dist(g.num_nodes(), kDistInf);
   dist[source] = 0;
   pvector<NodeID> frontier(g.num_edges_directed());
@@ -95,60 +97,142 @@ pvector<WeightT> DeltaStep(const WGraph &g, NodeID source, WeightT delta,
   size_t frontier_tails[2] = {1, 0};
   frontier[0] = source;
   t.Start();
-  #pragma omp parallel
-  {
-    vector<vector<NodeID> > local_bins(0);
-    size_t iter = 0;
-    while (shared_indexes[iter&1] != kMaxBin) {
-      size_t &curr_bin_index = shared_indexes[iter&1];
-      size_t &next_bin_index = shared_indexes[(iter+1)&1];
-      size_t &curr_frontier_tail = frontier_tails[iter&1];
-      size_t &next_frontier_tail = frontier_tails[(iter+1)&1];
-      #pragma omp for nowait schedule(dynamic, 64)
-      for (size_t i=0; i < curr_frontier_tail; i++) {
-        NodeID u = frontier[i];
-        if (dist[u] >= delta * static_cast<WeightT>(curr_bin_index))
-          RelaxEdges(g, u, delta, dist, local_bins);
+  int64_t region_result = 0;
+  // Shared loop-continue flag coordinated by thread 0 each iteration
+  volatile int continue_shared = 1;
+  // Use P3 framework barrier
+  P3_PARALLEL_REGION(
+    [&](int thread_id, int num_threads) -> int64_t {
+      vector<vector<NodeID> > local_bins(0);
+      size_t iter = 0;
+      int continue_flag = 1;
+      if (debug_sssp) {
+        std::cerr << "[SSSP] thread enter " << thread_id << "/" << num_threads << std::endl;
       }
-      while (curr_bin_index < local_bins.size() &&
-             !local_bins[curr_bin_index].empty() &&
-             local_bins[curr_bin_index].size() < kBinSizeThreshold) {
-        vector<NodeID> curr_bin_copy = local_bins[curr_bin_index];
-        local_bins[curr_bin_index].resize(0);
-        for (NodeID u : curr_bin_copy)
-          RelaxEdges(g, u, delta, dist, local_bins);
-      }
-      for (size_t i=curr_bin_index; i < local_bins.size(); i++) {
-        if (!local_bins[i].empty()) {
-          #pragma omp critical
-          next_bin_index = min(next_bin_index, i);
+      for (;;) {
+        // Coordinate loop continuation to avoid barrier divergence
+        if (debug_sssp) {
+          std::cerr << "[SSSP] before barrier A thread=" << thread_id << " iter=" << iter << std::endl;
+        }
+        P3_BARRIER();
+        if (debug_sssp) {
+          std::cerr << "[SSSP] after  barrier A thread=" << thread_id << " iter=" << iter << std::endl;
+        }
+        if (thread_id == 0)
+          continue_shared = (shared_indexes[iter&1] != kMaxBin) ? 1 : 0;
+        if (debug_sssp) {
+          std::cerr << "[SSSP] before barrier B thread=" << thread_id << " iter=" << iter << " continue_shared=" << continue_shared << std::endl;
+        }
+        P3_BARRIER();
+        if (debug_sssp) {
+          std::cerr << "[SSSP] after  barrier B thread=" << thread_id << " iter=" << iter << std::endl;
+        }
+        continue_flag = continue_shared;
+        if (debug_sssp && thread_id == 0) {
+          std::cerr << "[SSSP] iter=" << iter
+                    << " shared_indexes[" << (iter&1) << "]=" << shared_indexes[iter&1]
+                    << " continue=" << continue_flag << std::endl;
+        }
+        if (!continue_flag)
           break;
+
+        size_t &curr_bin_index = shared_indexes[iter&1];
+        size_t &next_bin_index = shared_indexes[(iter+1)&1];
+        // Reset next_bin_index at start of iteration to seek fresh minimum
+        if (thread_id == 0) next_bin_index = kMaxBin;
+        P3_BARRIER();
+        size_t &curr_frontier_tail = frontier_tails[iter&1];
+        size_t &next_frontier_tail = frontier_tails[(iter+1)&1];
+
+        // Emulate omp for nowait schedule(dynamic,64) with cyclic distribution
+        if (debug_sssp && thread_id == 0) {
+          std::cerr << "[SSSP] process frontier tail=" << curr_frontier_tail
+                    << " curr_bin_index=" << curr_bin_index << std::endl;
+        }
+        for (size_t i = thread_id; i < curr_frontier_tail; i += num_threads) {
+          NodeID u = frontier[i];
+          if (dist[u] >= delta * static_cast<WeightT>(curr_bin_index))
+            RelaxEdges(g, u, delta, dist, local_bins);
+        }
+
+        // Bucket fusion phase (thread-local)
+        while (curr_bin_index < local_bins.size() &&
+               !local_bins[curr_bin_index].empty() &&
+               local_bins[curr_bin_index].size() < kBinSizeThreshold) {
+          vector<NodeID> curr_bin_copy = local_bins[curr_bin_index];
+          local_bins[curr_bin_index].resize(0);
+          for (NodeID u : curr_bin_copy)
+            RelaxEdges(g, u, delta, dist, local_bins);
+        }
+
+        // Find smallest non-empty local bin and reduce via critical section
+        for (size_t i = curr_bin_index; i < local_bins.size(); i++) {
+          if (!local_bins[i].empty()) {
+            P3_CRITICAL([&]() {
+              next_bin_index = min(next_bin_index, i);
+            });
+            break;
+          }
+        }
+
+        P3_BARRIER();
+
+        // Serialize reset without implicit synchronization
+        P3_CRITICAL([&]() {
+          t.Stop();
+          if (logging_enabled)
+            PrintStep(curr_bin_index, t.Millisecs(), curr_frontier_tail);
+          t.Start();
+          if (debug_sssp) {
+            std::cerr << "[SSSP] single: reset curr_bin_index from "
+                      << curr_bin_index << ", tail=" << curr_frontier_tail << std::endl;
+          }
+          curr_bin_index = kMaxBin;
+          curr_frontier_tail = 0;
+        });
+
+        // Ensure all threads see the reset before copy stage
+        P3_BARRIER();
+
+        // Copy thread-local next bin to shared frontier (serialized to avoid races)
+        if (next_bin_index < local_bins.size()) {
+          P3_CRITICAL([&]() {
+            for (NodeID vtx : local_bins[next_bin_index]) {
+              frontier[next_frontier_tail++] = vtx;
+            }
+          });
+          local_bins[next_bin_index].resize(0);
+          if (debug_sssp) {
+            std::cerr << "[SSSP] copy(serial): next_bin_index=" << next_bin_index
+                      << " thread=" << thread_id
+                      << " new_tail=" << next_frontier_tail << std::endl;
+          }
+        } else {
+          if (debug_sssp && thread_id == 0) {
+            std::cerr << "[SSSP] no next_bin_index available at iter=" << iter << std::endl;
+          }
+        }
+
+        iter++;
+        static std::atomic<int> arrived_c{0};
+        if (debug_sssp) {
+          int a = arrived_c.fetch_add(1) + 1;
+          std::cerr << "[SSSP] before barrier C thread=" << thread_id << " iter=" << iter
+                    << " arrived_c=" << a << std::endl;
+        }
+        P3_BARRIER();
+        if (debug_sssp) {
+          if (thread_id == 0) arrived_c.store(0);
+          std::cerr << "[SSSP] after  barrier C thread=" << thread_id << " iter=" << iter << std::endl;
         }
       }
-      #pragma omp barrier
-      #pragma omp single nowait
-      {
-        t.Stop();
-        if (logging_enabled)
-          PrintStep(curr_bin_index, t.Millisecs(), curr_frontier_tail);
-        t.Start();
-        curr_bin_index = kMaxBin;
-        curr_frontier_tail = 0;
-      }
-      if (next_bin_index < local_bins.size()) {
-        size_t copy_start = fetch_and_add(next_frontier_tail,
-                                          local_bins[next_bin_index].size());
-        copy(local_bins[next_bin_index].begin(),
-             local_bins[next_bin_index].end(), frontier.data() + copy_start);
-        local_bins[next_bin_index].resize(0);
-      }
-      iter++;
-      #pragma omp barrier
-    }
-    #pragma omp single
-    if (logging_enabled)
-      cout << "took " << iter << " iterations" << endl;
-  }
+
+      if (thread_id == 0 && logging_enabled)
+        cout << "took " << iter << " iterations" << endl;
+
+      return 0;
+    },
+    region_result);
   return dist;
 }
 
@@ -198,6 +282,15 @@ int main(int argc, char* argv[]) {
   CLDelta<WeightT> cli(argc, argv, "single-source shortest-path");
   if (!cli.ParseArgs())
     return -1;
+  // Honor P3_NUM_THREADS if set
+  const char* p3_threads = getenv("P3_NUM_THREADS");
+  if (p3_threads) {
+    int threads = std::atoi(p3_threads);
+    if (threads > 0) {
+      p3_set_num_threads(threads);
+      std::cout << "Using " << threads << " threads (from P3_NUM_THREADS)" << std::endl;
+    }
+  }
   WeightedBuilder b(cli);
   WGraph g = b.MakeGraph();
   SourcePicker<WGraph> sp(g, cli.start_vertex());

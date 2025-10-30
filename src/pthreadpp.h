@@ -74,6 +74,7 @@ private:
     };
     
     std::unique_ptr<Barrier> barrier_;
+    pthread_mutex_t init_mutex_ = PTHREAD_MUTEX_INITIALIZER;
     
     // C++11 compatible make_unique implementation
     template<typename T, typename... Args>
@@ -92,6 +93,8 @@ public:
             pthread_mutex_init(&mutexes_[i], nullptr);
             pthread_cond_init(&conditions_[i], nullptr);
         }
+        // Initialize barrier for current thread count
+        barrier_ = make_unique<Barrier>(num_threads_);
     }
     
     // Set number of threads at runtime
@@ -112,6 +115,10 @@ public:
                 pthread_mutex_init(&mutexes_[i], nullptr);
                 pthread_cond_init(&conditions_[i], nullptr);
             }
+            // Recreate barrier with new thread count
+            pthread_mutex_lock(&init_mutex_);
+            barrier_ = make_unique<Barrier>(num_threads_);
+            pthread_mutex_unlock(&init_mutex_);
         }
     }
     
@@ -133,8 +140,13 @@ private:
 public:
     // Barrier synchronization
     void barrier() {
+        // Ensure single initialization (also handles races if called early)
         if (!barrier_) {
-            barrier_ = make_unique<Barrier>(num_threads_);
+            pthread_mutex_lock(&init_mutex_);
+            if (!barrier_) {
+                barrier_ = make_unique<Barrier>(num_threads_);
+            }
+            pthread_mutex_unlock(&init_mutex_);
         }
         barrier_->wait();
     }

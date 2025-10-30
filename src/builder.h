@@ -74,7 +74,7 @@ class BuilderBase {
       [&](size_t i) -> NodeID_ {
         auto it = el.begin() + i;
         Edge e = *it;
-        return std::max(e.u, e.v);
+        return std::max(e.u, static_cast<NodeID_>(e.v));
       }, max_seen, 0);
     return max_seen;
   }
