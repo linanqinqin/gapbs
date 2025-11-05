@@ -317,7 +317,7 @@ int main(int argc, char* argv[]) {
   Graph g = b.MakeGraph();
   
   // Barrier: wait for user input before starting BFS processing
-  std::cout << "Graph construction complete. Press Enter to start BFS processing..." << std::endl;
+  std::cout << "Graph construction complete. Press Enter to start BFS benchmark..." << std::endl;
   std::string input;
   std::getline(std::cin, input);
   

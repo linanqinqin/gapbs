@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cinttypes>
 #include <iostream>
+#include <string>
 #include <vector>
 
 #include "benchmark.h"
@@ -164,6 +165,12 @@ int main(int argc, char* argv[]) {
     cout << "Input graph is directed but tc requires undirected" << endl;
     return -2;
   }
+  
+  // Barrier: wait for user input before starting TC processing
+  std::cout << "Graph construction complete. Press Enter to start Triangle Counting benchmark..." << std::endl;
+  std::string input;
+  std::getline(std::cin, input);
+  
   BenchmarkKernel(cli, g, Hybrid, PrintTriangleStats, TCVerifier);
   return 0;
 }

@@ -3,6 +3,7 @@
 
 #include <functional>
 #include <iostream>
+#include <string>
 #include <vector>
 
 #include "benchmark.h"
@@ -292,6 +293,12 @@ int main(int argc, char* argv[]) {
   
   Builder b(cli);
   Graph g = b.MakeGraph();
+  
+  // Barrier: wait for user input before starting BC processing
+  std::cout << "Graph construction complete. Press Enter to start Betweenness Centrality benchmark..." << std::endl;
+  std::string input;
+  std::getline(std::cin, input);
+  
   SourcePicker<Graph> sp(g, cli.start_vertex());
   auto BCBound = [&sp, &cli] (const Graph &g) {
     return Brandes(g, sp, cli.num_iters(), cli.logging_en());

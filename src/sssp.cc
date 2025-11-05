@@ -5,6 +5,7 @@
 #include <limits>
 #include <iostream>
 #include <queue>
+#include <string>
 #include <vector>
 
 #include "benchmark.h"
@@ -293,6 +294,12 @@ int main(int argc, char* argv[]) {
   }
   WeightedBuilder b(cli);
   WGraph g = b.MakeGraph();
+  
+  // Barrier: wait for user input before starting SSSP processing
+  std::cout << "Graph construction complete. Press Enter to start Single-Source Shortest Path benchmark..." << std::endl;
+  std::string input;
+  std::getline(std::cin, input);
+  
   SourcePicker<WGraph> sp(g, cli.start_vertex());
   auto SSSPBound = [&sp, &cli] (const WGraph &g) {
     return DeltaStep(g, sp.PickNext(), cli.delta(), cli.logging_en());

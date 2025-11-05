@@ -243,7 +243,7 @@ int main(int argc, char* argv[]) {
   Graph g = b.MakeGraph();
   
   // Barrier: wait for user input before starting CC processing
-  std::cout << "Graph construction complete. Press Enter to start Connected Components processing..." << std::endl;
+  std::cout << "Graph construction complete. Press Enter to start Connected Components benchmark..." << std::endl;
   std::string input;
   std::getline(std::cin, input);
   
