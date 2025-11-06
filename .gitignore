@@ -15,4 +15,7 @@ benchmark/graphs/*.sg
 benchmark/graphs/*.wsg
 benchmark/graphs/raw/*
 
+*.d
+*.o
+
 .cursor/
