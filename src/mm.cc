@@ -222,7 +222,7 @@ int main(int argc, char* argv[]) {
     ground_truth = matrixMultiplySerial(A, B, size);
     t.Stop();
     PrintTime("Ground Truth Computation Time", t.Seconds());
-    PrintStep("Ground Truth Sum", static_cast<int64_t>(ground_truth));
+    // PrintStep("Ground Truth Sum", static_cast<int64_t>(ground_truth));
   }
 
   // Barrier: wait for user input before starting matrix multiplication trials
@@ -242,7 +242,7 @@ int main(int argc, char* argv[]) {
     trial_timer.Stop();
     
     PrintTime("Trial Time", trial_timer.Seconds());
-    PrintStep("Result Sum", static_cast<int64_t>(result));
+    // PrintStep("Result Sum", static_cast<int64_t>(result));
     total_seconds += trial_timer.Seconds();
 
     // Verify if requested
