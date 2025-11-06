@@ -7,6 +7,7 @@ pr
 pr_spmv
 sssp
 tc
+mm
 
 test/out/*.out
 
