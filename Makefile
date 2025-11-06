@@ -1,7 +1,7 @@
 # See LICENSE.txt for license details.
 
 ROOT_PATH=../..
-include $(ROOT_PATH)/build/shared.mk
+include $(ROOT_PATH)/build/shared-apps.mk
 
 # P3 (pthreadpp) is now the default parallelization framework
 # OpenMP has been completely replaced with P3
