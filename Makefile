@@ -6,7 +6,7 @@ include $(ROOT_PATH)/build/shared.mk
 # P3 (pthreadpp) is now the default parallelization framework
 # OpenMP has been completely replaced with P3
 
-KERNELS = bc bfs cc cc_sv pr pr_spmv sssp tc
+KERNELS = bc bfs cc cc_sv pr pr_spmv sssp tc mm
 SUITE = $(KERNELS) converter
 
 # Collect all source files
